@@ -1,0 +1,4 @@
+matplotlib==3.4.2
+numpy==1.23.5
+omegaconf==2.1.2
+tqdm==4.65.0
