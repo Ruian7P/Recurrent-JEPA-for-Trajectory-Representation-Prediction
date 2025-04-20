@@ -157,7 +157,7 @@ class ProbingEvaluator:
                 per_probe_loss = losses.mean()
 
                 if step % 100 == 0:
-                    print(f"normalized pred locations loss {per_probe_loss.item()}")
+                    print(f"\nnormalized pred locations loss {per_probe_loss.item()}")
 
                 losses_list.append(per_probe_loss)
                 optimizer_pred_prober.zero_grad()

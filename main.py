@@ -3,6 +3,8 @@ from evaluator import ProbingEvaluator
 import torch
 from models import MockModel
 import glob
+from configs import PATH, CONFIG_PATH, MODEL_PATH, ModelConfig
+from models import MODELS
 
 
 def get_device():
@@ -13,7 +15,7 @@ def get_device():
 
 
 def load_data(device):
-    data_path = "/scratch/DL25SP"
+    data_path = PATH
 
     probe_train_ds = create_wall_dataloader(
         data_path=f"{data_path}/probe_normal/train",
@@ -47,8 +49,15 @@ def load_data(device):
 def load_model():
     """Load or initialize the model."""
     # TODO: Replace MockModel with your trained model
-    model = MockModel()
+    config = ModelConfig.parse_from_file(CONFIG_PATH)
+    model_name = config.Model
+    model = MODELS[model_name](config).to(device)
+    model.repr_dim = 289
+    model.load_state_dict(torch.load(MODEL_PATH))
+    model.eval()
     return model
+
+    
 
 
 def evaluate_model(device, model, probe_train_ds, probe_val_ds):

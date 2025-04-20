@@ -1,0 +1,13 @@
+Model: "JEPA2D"
+in_w: 64
+teacher_forcing: true
+
+out_channel: 16
+num_block: 2
+num_resblock: 1
+
+hidden_channel: 32
+
+batch_size: 128
+epochs: 20
+lr: 1e-3
