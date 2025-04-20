@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 
 DataClass = Any
 DataClassType = Any
-PATH = "./DL25SP"
+PATH = "/sketch/DL25SP"
 CONFIG_PATH = "./configs/JEPA2D_256_16_32_128_20_1e-3.yaml"
 MODEL_PATH = "./models/JEPA2D.pt"
 

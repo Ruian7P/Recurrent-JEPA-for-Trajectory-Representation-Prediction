@@ -57,9 +57,6 @@ def load_model():
     model.eval()
     return model
 
-    
-
-
 def evaluate_model(device, model, probe_train_ds, probe_val_ds):
     evaluator = ProbingEvaluator(
         device=device,
