@@ -1,0 +1,12 @@
+Model: "JEPA"
+teacher_forcing: true
+
+out_channel: 32
+num_block: 4
+num_resblock: 1
+
+hidden_channel: 32
+
+batch_size: 256
+epochs: 10
+lr: 1e-3

@@ -52,7 +52,6 @@ def load_model():
     config = ModelConfig.parse_from_file(CONFIG_PATH)
     model_name = config.Model
     model = MODELS[model_name](config).to(device)
-    model.repr_dim = 289
     model.load_state_dict(torch.load(MODEL_PATH))
     model.eval()
     return model

@@ -9,8 +9,8 @@ from omegaconf import OmegaConf
 DataClass = Any
 DataClassType = Any
 PATH = "./DL25SP"
-CONFIG_PATH = "./configs/JEPA2D_256_16_32_128_20_1e-3.yaml"
-MODEL_PATH = "./models/JEPA2D.pt"
+CONFIG_PATH = "./configs/JEPA_32_4_1_32_10_1e-3.yaml"
+MODEL_PATH = "./models/JEPA_32_4_1_32_10_1e-3.pt"
 
 
 from typing import Any, Dict, Type, TypeVar, Union
@@ -130,14 +130,13 @@ class ModelConfig(ConfigBase):
 
     # Model parameters
     Model: str = "JEPA2D"
-    in_w: int = 65      # fixed
     teacher_forcing: bool = True
 
 
     # Encoder parameters
-    out_channel: int = 16     # initial output channel: [16, 32, 64] 
-    num_block: int = 2      # number of EncoderBlock: [1, 2, 3, 4] -> [33, 17, 9, 5]
-    num_resblock: int = 1     # number of ResBlock: [1, 2, 3]
+    out_channel: int = 32     # initial output channel: [16, 32, 64] 
+    num_block: int = 4      # number of EncoderBlock: [1, 2, 3, 4] -> [33, 17, 9, 5]
+    num_resblock: int = 2     # number of ResBlock: [1, 2, 3]
 
 
     # Predictor parameters

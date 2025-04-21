@@ -58,6 +58,7 @@ def train(config: ModelConfig):
 
     # save final model
     os.makedirs("models", exist_ok=True)
+    model_name = CONFIG_PATH.split("/")[-1].split(".")[0]
     torch.save(model.state_dict(), f"models/{model_name}.pt")
     print("Training complete!")
 
