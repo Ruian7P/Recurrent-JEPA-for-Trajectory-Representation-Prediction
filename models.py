@@ -5,8 +5,6 @@ from torch.nn import functional as F
 import torch
 import math
 
-
-
 def build_mlp(layers_dims: List[int]):
     layers = []
     for i in range(len(layers_dims) - 2):
@@ -16,12 +14,10 @@ def build_mlp(layers_dims: List[int]):
     layers.append(nn.Linear(layers_dims[-2], layers_dims[-1]))
     return nn.Sequential(*layers)
 
-
 class MockModel(torch.nn.Module):
     """
     Does nothing. Just for testing.
     """
-
     def __init__(self, device="cuda", output_dim=256):
         super().__init__()
         self.device = device
@@ -42,7 +38,6 @@ class MockModel(torch.nn.Module):
         B, T, _ = actions.shape
 
         return torch.randn((B, T + 1, self.repr_dim)).to(self.device)
-
 
 class Prober(torch.nn.Module):
     def __init__(
@@ -68,9 +63,6 @@ class Prober(torch.nn.Module):
     def forward(self, e):
         output = self.prober(e)
         return output
-
-
-
 
 # ----------------- Some Blocks -----------------
 class ResBlock(nn.Module):
@@ -98,8 +90,6 @@ class ResBlock(nn.Module):
         out = F.relu(out)
         return out
 
-
-
 # ----------------- JEPA2D -----------------
 class Encoder2D(nn.Module):
     def __init__(self, config):
@@ -108,7 +98,6 @@ class Encoder2D(nn.Module):
 
         # Calculate the number of ResBlocks
         self.num_blocks = config.num_block
-
         layers = []
         in_channel = 2
         out_channel = config.out_channel    # initial output channel
@@ -129,7 +118,6 @@ class Encoder2D(nn.Module):
             out_channel *= 2
 
         layers.append(nn.Conv2d(in_channel, 1, kernel_size=1))  # (B, 1, emb_w, emb_w)
-
         self.encoder = nn.Sequential(*layers)   
         
         
@@ -141,7 +129,6 @@ class Encoder2D(nn.Module):
 
         x = self.encoder(x)
         return x
-            
 
 class Predictor2D(nn.Module):
     def __init__(self, config):
@@ -179,21 +166,45 @@ class Predictor2D(nn.Module):
 
         x = self.conv(x)  # (B, 1, emb_w, emb_w)
         return x
-    
 
+# ----------------------------- helper ------------------------------------------
+def off_diagonal(x):
+    # Return a flattened view of the off-diagonal elements of a square matrix
+    n, m = x.shape
+    assert n == m
+    return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+
+def vicreg_loss(x, y, sim_coeff=25.0, std_coeff=25.0, cov_coeff=1.0, eps=1e-4):
+    """
+    Args:
+        x, y: [B, D] - Flattened embedding from encoder and predictor
+    """
+
+    # Invariance loss (MSE)
+    repr_loss = F.mse_loss(x, y)
+
+    # Variance loss
+    std_x = torch.sqrt(x.var(dim=0) + eps)
+    std_y = torch.sqrt(y.var(dim=0) + eps)
+    std_loss = torch.mean(F.relu(1 - std_x)) + torch.mean(F.relu(1 - std_y))
+
+    # Covariance loss
+    x = x - x.mean(dim=0)
+    y = y - y.mean(dim=0)
+    cov_x = (x.T @ x) / (x.shape[0] - 1)
+    cov_y = (y.T @ y) / (y.shape[0] - 1)
+    cov_loss = off_diagonal(cov_x).pow_(2).sum() / x.shape[1] + off_diagonal(cov_y).pow_(2).sum() / y.shape[1]
+
+    return sim_coeff * repr_loss + std_coeff * std_loss + cov_coeff * cov_loss
 
 
 class JEPA2D(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-
         self.teacher_forcing = config.teacher_forcing
-
         self.encoder = Encoder2D(config)
         self.predictor = Predictor2D(config)
-
-
 
     def forward(self, states, actions):
         """
@@ -208,7 +219,7 @@ class JEPA2D(nn.Module):
 
         B, T, C, H, W = states.shape
         
-        if self.teacher_forcing and T >1:
+        if self.teacher_forcing and T > 1:
             states = states.view(B * T, C, H, W) # (B*T, 2, 65, 65)
             
             enc_states = self.encoder(states)  # (B*T, 1, emb_w, emb_w)
@@ -257,11 +268,7 @@ class JEPA2D(nn.Module):
             # TODO
             raise NotImplementedError("None Teacher Forcing is not implemented yet.")
 
-
-
-            
-
-        
+    # --------------------------------- implementation of mse --------------------------------- 
     def loss_mse(self, enc_states, pred_states):
         """
         Args:
@@ -275,7 +282,7 @@ class JEPA2D(nn.Module):
         loss = F.mse_loss(enc_states[:, 1:], pred_states[:, :-1], reduction='mean')
         return loss
 
-
+    # --------------------------------- implementation of vicreg --------------------------------- 
     def loss_vicreg(self, enc_states, pred_states):
         """
         Args:
@@ -285,10 +292,13 @@ class JEPA2D(nn.Module):
         Output:
             loss: scalar
         """
+        B, T, _, H, W = enc_states.shape
+        x = enc_states[:, 1:].reshape(B * (T - 1), -1)
+        y = pred_states[:, :-1].reshape(B * (T - 1), -1)
 
-        # TODO
-        pass
+        return vicreg_loss(x, y)
 
+    # --------------------------------- implementation of regularization --------------------------------- 
     def loss_R(self, enc_states, pred_states):
         """
         Args:
@@ -301,18 +311,6 @@ class JEPA2D(nn.Module):
 
         # TODO
         pass
-
-
-
-    
-        
-
-            
-    
-            
-
-
-
 
 # ---------------- Models -------------------
 MODELS: dict = {

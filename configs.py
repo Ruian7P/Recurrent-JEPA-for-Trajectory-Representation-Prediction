@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 
 DataClass = Any
 DataClassType = Any
-PATH = "/sketch/DL25SP"
+PATH = "/mnt/f/DL25SP/"
 CONFIG_PATH = "./configs/JEPA2D_256_16_32_128_20_1e-3.yaml"
 MODEL_PATH = "./models/JEPA2D.pt"
 
@@ -122,8 +122,6 @@ class ConfigBase:
         with open(path, "w") as f:
             OmegaConf.save(config=self, f=f)
 
-
-
 @dataclass
 class ModelConfig(ConfigBase):
     """Model configuration."""
@@ -133,21 +131,15 @@ class ModelConfig(ConfigBase):
     in_w: int = 65      # fixed
     teacher_forcing: bool = True
 
-
     # Encoder parameters
     out_channel: int = 16     # initial output channel: [16, 32, 64] 
     num_block: int = 2      # number of EncoderBlock: [1, 2, 3, 4] -> [33, 17, 9, 5]
     num_resblock: int = 1     # number of ResBlock: [1, 2, 3]
 
-
     # Predictor parameters
     hidden_channel: int = 32   # hidden channel: [16, 32, 64]
-
 
     # Training parameters
     batch_size: int = 128
     epochs: int = 20
     lr: float = 1e-3
-     
-
-    

@@ -8,8 +8,6 @@ from configs import ModelConfig, PATH, CONFIG_PATH
 from tqdm import tqdm
 import os
 
-
-
 def train(config: ModelConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     lr = config.lr
@@ -25,7 +23,6 @@ def train(config: ModelConfig):
     model = MODELS[model_name]
     model = model(config).to(device)
 
-
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -36,13 +33,15 @@ def train(config: ModelConfig):
     for epoch in range(epochs):  # adjust as needed
         epoch_loss = 0
         for batch in tqdm(train_loader, desc=f"Epoch {epoch}"):
-            states, actions = batch.states, batch.actions  # (B, T, C, H, W), (B, T-1, 2)
+            # states -> (B, T, C, H, W)
+            # actions -> (B, T-1, 2)
+            states, actions = batch.states, batch.actions  
             optimizer.zero_grad()
 
             enc, pred = model(states, actions)  # Forward pass
 
             # Loss
-            loss = model.loss_mse(enc, pred)  
+            loss = model.loss_mse(enc, pred) + model.loss_vicreg(enc, pred)
             loss.backward()
             optimizer.step()
 
