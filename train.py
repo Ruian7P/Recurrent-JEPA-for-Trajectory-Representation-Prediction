@@ -7,14 +7,20 @@ from models import MODELS
 from configs import ModelConfig, PATH, CONFIG_PATH
 from tqdm import tqdm
 import os
+from accelerate import Accelerator
 
 
 
 def train(config: ModelConfig):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    accelerator = Accelerator()
+    device = accelerator.device
     lr = config.lr
     batch_size = config.batch_size
     epochs = config.epochs
+
+    # print config
+    print("Config:")
+    print(config)
 
     # Dataset
     data_path = f"{PATH}/train"
@@ -30,37 +36,44 @@ def train(config: ModelConfig):
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     # Scheduler
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.5)
+
+    model, optimizer, train_loader, scheduler = accelerator.prepare(
+        model, optimizer, train_loader, scheduler
+    )
 
     # Training loop
     for epoch in range(epochs):  # adjust as needed
         epoch_loss = 0
-        for batch in tqdm(train_loader, desc=f"Epoch {epoch}"):
+        for batch in tqdm(train_loader, desc=f"Epoch {epoch + 1}"):
             states, actions = batch.states, batch.actions  # (B, T, C, H, W), (B, T-1, 2)
             optimizer.zero_grad()
 
             enc, pred = model(states, actions)  # Forward pass
 
             # Loss
-            loss = model.loss_mse(enc, pred)  
-            loss.backward()
+            loss = model.compute_loss()
+            accelerator.backward(loss)  # Backward pass
             optimizer.step()
 
             epoch_loss += loss.item()
 
         scheduler.step()  
-        print(f"Epoch {epoch}, Loss: {epoch_loss / len(train_loader)}")
+        accelerator.print(f"Epoch {epoch+1}, Loss: {epoch_loss / len(train_loader)}")
 
         # Save model checkpoint
-        os.makedirs("checkpoints", exist_ok=True)
-        torch.save(model.state_dict(), f"checkpoints/{epoch}.pt")
+        if accelerator.is_main_process:
+            if epoch % 5 == 0:
+                os.makedirs("checkpoints", exist_ok=True)
+                torch.save(model.state_dict(), f"checkpoints/{epoch+1}.pth")
 
 
     # save final model
-    os.makedirs("models", exist_ok=True)
-    model_name = CONFIG_PATH.split("/")[-1].split(".")[0]
-    torch.save(model.state_dict(), f"models/{model_name}.pt")
-    print("Training complete!")
+    if accelerator.is_main_process:
+        os.makedirs("models", exist_ok=True)
+        model_name = CONFIG_PATH.split("/")[-1].split(".")[0]
+        torch.save(model.state_dict(), f"models/{model_name}.pth")
+        accelerator.print("Training complete!")
 
 
 # def parse_args():

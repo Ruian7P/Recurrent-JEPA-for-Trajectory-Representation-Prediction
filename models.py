@@ -72,7 +72,7 @@ class Prober(torch.nn.Module):
 
 
 
-# ----------------- Some Blocks -----------------
+# ----------------- Some Helpers -----------------
 class ResBlock(nn.Module):
     def __init__(self, in_channel, out_channel):
         super().__init__()
@@ -97,6 +97,36 @@ class ResBlock(nn.Module):
         out += self.shortcut(x)
         out = F.relu(out)
         return out
+    
+
+def off_diagonal(x):
+    # Return a flattened view of the off-diagonal elements of a square matrix
+    n, m = x.shape
+    assert n == m
+    return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+
+def vicreg_loss(x, y, sim_coeff=25.0, std_coeff=25.0, cov_coeff=1.0, eps=1e-4):
+    """
+    Args:
+        x, y: [B, D] - Flattened embedding from encoder and predictor
+    """
+
+    # Invariance loss (MSE)
+    repr_loss = F.mse_loss(x, y)
+
+    # Variance loss
+    std_x = torch.sqrt(x.var(dim=0) + eps)
+    std_y = torch.sqrt(y.var(dim=0) + eps)
+    std_loss = torch.mean(F.relu(1 - std_x)) + torch.mean(F.relu(1 - std_y))
+
+    # Covariance loss
+    x = x - x.mean(dim=0)
+    y = y - y.mean(dim=0)
+    cov_x = (x.T @ x) / (x.shape[0] - 1)
+    cov_y = (y.T @ y) / (y.shape[0] - 1)
+    cov_loss = off_diagonal(cov_x).pow_(2).sum() / x.shape[1] + off_diagonal(cov_y).pow_(2).sum() / y.shape[1]
+
+    return sim_coeff * repr_loss + std_coeff * std_loss + cov_coeff * cov_loss
 
 
 
@@ -181,6 +211,33 @@ class Predictor2D(nn.Module):
         return x
     
 
+class Regularizer2D(nn.Module):
+    def __init__(self, repr_dim):
+        super().__init__()
+        self.emb_w= int(math.sqrt(repr_dim))  # Calculate the side of the 2D embedding
+        self.action_reg_net = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),  # 2D conv layer
+            nn.ReLU(),
+            nn.Conv2d(16, 1, kernel_size=3, padding=1),  # Output single channel
+            nn.Flatten(),  # Flatten to prepare for linear mapping
+            nn.Linear(self.emb_w * self.emb_w, 2),  # Map to action_dim
+        )
+
+    def forward(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T-1, 1, emb_w, emb_w]
+            pred_states: [B, T-1, 1, emb_w, emb_w]
+        Output: 
+            predicted_actions: [B(T-1), 2]
+        """
+        # Calculate embedding differences
+        embedding_diff = pred_states - enc_states  # [B, T-1, 1, emb_w, emb_w]
+        embedding_diff = embedding_diff.view(-1, 1, self.emb_w, self.emb_w)
+
+        # Predict actions from embedding differences
+        predicted_actions = self.action_reg_net(embedding_diff)  # [B(T-1), 2]
+        return predicted_actions
 
 
 class JEPA2D(nn.Module):
@@ -198,6 +255,7 @@ class JEPA2D(nn.Module):
 
         self.repr_dim = self.emb_w * self.emb_w
 
+        self.regularizer = Regularizer2D(self.repr_dim)
 
 
     def forward(self, states, actions):
@@ -211,6 +269,8 @@ class JEPA2D(nn.Module):
             pred_states: [B, T, 1, emb_w, emb_w], T: (s_0, tilde{s_1}, ..., tilde{s_T})
         """
 
+        self.actions = actions
+        self.states = states
         B, T, C, H, W = states.shape
         
         if self.teacher_forcing and T >1:
@@ -233,6 +293,9 @@ class JEPA2D(nn.Module):
             next_states = self.predictor(predictor_states, actions)  # (B*(T-1), 1, emb_w, emb_w)
             next_states = next_states.view(B, T - 1, 1, emb_h, emb_w)
             pred_states[:, 1:] = next_states   # (B, T-1, 1, emb_w, emb_w)
+
+            self.enc_states = enc_states
+            self.pred_states = pred_states 
 
             return enc_states, pred_states
         
@@ -290,22 +353,42 @@ class JEPA2D(nn.Module):
         Output:
             loss: scalar
         """
+        B, T, _, H, W = enc_states.shape
+        x = enc_states[:, 1:].reshape(B * (T - 1), -1)
+        y = pred_states[:, :-1].reshape(B * (T - 1), -1)
 
-        # TODO
-        pass
+        return vicreg_loss(x, y, self.config.sim_coeff, self.config.std_coeff, self.config.cov_coeff, self.config.eps)
+    
 
-    def loss_R(self, enc_states, pred_states):
+    def loss_R(self, enc_states, pred_states, actions):
         """
         Args:
             enc_states: [B, T, 1, emb_h, emb_w]
             pred_states: [B, T, 1, emb_h, emb_w]
+            actions: [B, T-1, 2]
 
         Output:
             loss: scalar
         """
+        
+        # Calculate the action regularization loss
+        predicted_actions = self.regularizer(enc_states[:, :-1], pred_states[:, 1:])  # [B(T-1), 2]
+        actions = actions.view(-1, 2)
+        loss = F.mse_loss(predicted_actions, actions, reduction='mean')
+        return loss
+    
 
-        # TODO
-        pass
+    def compute_loss(self):
+        """
+        Compute the loss for the model.
+        """
+        # Compute the loss
+        vicreg = self.loss_vicreg(self.enc_states, self.pred_states)
+        reg = self.loss_R(self.enc_states, self.pred_states, self.actions)
+        loss = vicreg + reg * self.config.reg_coeff
+        return loss
+
+        
 
 
 
@@ -366,12 +449,19 @@ class Predictor(nn.Module):
         self.config = config
         self.repr_dim = config.out_channel * 2 ** (config.num_block - 1)  # final output channel
 
+        # self.mlp = nn.Sequential(
+        #     nn.Linear(self.repr_dim + 2, self.repr_dim * 2),
+        #     nn.ReLU(),
+        #     nn.Linear(self.repr_dim * 2, self.repr_dim),
+        #     nn.ReLU(),
+        #     nn.Linear(self.repr_dim, self.repr_dim)
+        # )
+
+        self.action_fc = nn.Linear(2, self.repr_dim)
         self.mlp = nn.Sequential(
-            nn.Linear(self.repr_dim + 2, self.repr_dim * 2),
+            nn.Linear(self.repr_dim + self.repr_dim, int(self.repr_dim)),
             nn.ReLU(),
-            nn.Linear(self.repr_dim * 2, self.repr_dim),
-            nn.ReLU(),
-            nn.Linear(self.repr_dim, self.repr_dim)
+            nn.Linear(int(self.repr_dim), self.repr_dim)
         )
 
 
@@ -384,14 +474,43 @@ class Predictor(nn.Module):
 
         Output: (B, 1, repr_dim)
         """
-        x = torch.cat((states, actions), dim= -1) # (B, 1, repr_dim + 2)
-        x = x.squeeze(1)  # (B, repr_dim + 2)
-        x = self.mlp(x)  # (B, repr_dim)
-        x = x.unsqueeze(1)  # (B, 1, repr_dim) 
+        # x = torch.cat((states, actions), dim= -1) # (B, 1, repr_dim + 2)
+        # x = x.squeeze(1)  # (B, repr_dim + 2)
+        # x = self.mlp(x)  # (B, repr_dim)
+        # x = x.unsqueeze(1)  # (B, 1, repr_dim) 
+
+        self.emb_action = self.action_fc(actions.squeeze(1))  # (B, repr_dim)
+        x = torch.cat((states.squeeze(1), self.emb_action), dim= -1) # (B, repr_dim * 2)
+        x = self.mlp(x)
+        x = x.unsqueeze(1)
         return x
 
     
+class Regularizer(nn.Module):
+    def __init__(self, repr_dim):
+        super().__init__()
+        self.repr_dim = repr_dim
+        self.action_reg_net = nn.Sequential(
+            nn.Linear(repr_dim, repr_dim),
+            nn.ReLU(),
+            nn.Linear(repr_dim, 2)
+        )
 
+    def forward(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T-1, 1, repr_dim]
+            pred_states: [B, T-1, 1, repr_dim]
+        Output: 
+            predicted_actions: [B(T-1), 2]
+        """
+        # Calculate embedding differences
+        embedding_diff = pred_states - enc_states  # [B, T-1, 1, repr_dim]
+        embedding_diff = embedding_diff.view(-1, self.repr_dim)
+
+        # Predict actions from embedding differences
+        predicted_actions = self.action_reg_net(embedding_diff)  # [B(T-1), 2]
+        return predicted_actions
 
 
 class JEPA(nn.Module):
@@ -406,6 +525,8 @@ class JEPA(nn.Module):
 
         self.repr_dim = config.out_channel * 2 ** (config.num_block - 1)  # final output channel
 
+        self.regularizer = Regularizer(self.repr_dim)
+
 
     def forward(self, states, actions):
         """
@@ -418,6 +539,8 @@ class JEPA(nn.Module):
             pred_states: [B, T, 1, repr_dim], T: (s_0, tilde{s_1}, ..., tilde{s_T})
         """
 
+        self.actions = actions
+        self.states = states
         B, T, C, H, W = states.shape
         
         if self.teacher_forcing and T >1:
@@ -440,6 +563,9 @@ class JEPA(nn.Module):
             next_states = self.predictor(predictor_states, actions)  # (B*(T-1), 1, repr_dim)
             next_states = next_states.view(B, T - 1, 1, repr_dim)
             pred_states[:, 1:] = next_states   # (B, T, 1, emb_w, emb_w)
+
+            self.enc_states = enc_states
+            self.pred_states = pred_states
 
             return enc_states, pred_states
         
@@ -498,22 +624,45 @@ class JEPA(nn.Module):
         Output:
             loss: scalar
         """
+        B, T, _, repr_dim = enc_states.shape
+        x = enc_states[:, 1:].reshape(B * (T - 1), -1)
+        y = pred_states[:, :-1].reshape(B * (T - 1), -1)
 
-        # TODO
-        pass
+        return vicreg_loss(x, y, self.config.sim_coeff, self.config.std_coeff, self.config.cov_coeff, self.config.eps)
 
-    def loss_R(self, enc_states, pred_states):
+
+
+    def loss_R(self, enc_states, pred_states, actions):
         """
         Args:
             enc_states: [B, T, 1, repr_dim]
             pred_states: [B, T, 1, repr_dim]
+            actions: [B, T-1, 2]
 
         Output:
             loss: scalar
         """
+        
+        # Calculate the action regularization loss
+        predicted_actions = self.regularizer(enc_states[:, :-1], pred_states[:, 1:])  # [B(T-1), 2]
+        actions = actions.view(-1, 2)
+        loss = F.mse_loss(predicted_actions, actions, reduction='mean')
 
-        # TODO
-        pass
+        # emb_action = self.predictor.emb_action
+        # loss = (emb_action**2).mean()
+
+        return loss
+
+         
+    def compute_loss(self):
+        """
+        Compute the loss for the model.
+        """
+        # Compute the loss
+        vicreg = self.loss_vicreg(self.enc_states, self.pred_states)
+        reg = self.loss_R(self.enc_states, self.pred_states, self.actions)
+        loss = vicreg + reg * self.config.reg_coeff 
+        return loss
             
     
             
