@@ -4,14 +4,15 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 from dataset import create_wall_dataloader
 from models import MODELS
-from configs import ModelConfig, PATH, CONFIG_PATH
+from configs import ModelConfig, PATH, CONFIG_PATH, MODEL_PATH
 from tqdm import tqdm
 import os
 from accelerate import Accelerator
 
 
 
-def train(config: ModelConfig):
+def train(config: ModelConfig, resume: bool = False):
+
     accelerator = Accelerator()
     device = accelerator.device
     lr = config.lr
@@ -31,12 +32,21 @@ def train(config: ModelConfig):
     model = MODELS[model_name]
     model = model(config).to(device)
 
+    if resume:
+        model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+        accelerator.print(f"Model loaded from {MODEL_PATH}.")
+    else:
+        accelerator.print("Training from scratch.")
+
 
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     # Scheduler
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=epochs
+    )
 
     model, optimizer, train_loader, scheduler = accelerator.prepare(
         model, optimizer, train_loader, scheduler
@@ -76,19 +86,15 @@ def train(config: ModelConfig):
         accelerator.print("Training complete!")
 
 
-# def parse_args():
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument(
-#         "--config", type=str, required=True, help="Path to config YAML"
-#     )
-#     return parser.parse_args()
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--resume", action="store_true", help= "Resume training from saved model"
+    )
+    return parser.parse_args()
 
-
-# if __name__ == "__main__":
-#     args = parse_args()
-#     config = ModelConfig.parse_from_file(args.config)
-#     train(config)
 
 if __name__ == "__main__":
+    args = parse_args()
     config = ModelConfig.parse_from_file(CONFIG_PATH)
-    train(config)
+    train(config, resume=args.resume)
