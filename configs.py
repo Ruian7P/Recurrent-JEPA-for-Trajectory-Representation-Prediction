@@ -9,8 +9,8 @@ from omegaconf import OmegaConf
 DataClass = Any
 DataClassType = Any
 PATH = "./DL25SP"
-CONFIG_PATH = "./configs/JEPA_16_3_1_16_10_1e-2.yaml"
-MODEL_PATH = "./models/JEPA_16_3_1_16_10_1e-3.pth"
+CONFIG_PATH = "./configs/JEPA2D_16_2_1_32_100_1e-5.yaml"
+MODEL_PATH = "./checkpoints/71.pth"
 
 
 from typing import Any, Dict, Type, TypeVar, Union
@@ -154,6 +154,7 @@ class ModelConfig(ConfigBase):
     batch_size: int = 128
     epochs: int = 20
     lr: float = 1e-3
+    weight_decay: float = 0.0
      
 
     

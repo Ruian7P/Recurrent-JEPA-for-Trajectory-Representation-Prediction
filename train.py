@@ -38,9 +38,16 @@ def train(config: ModelConfig, resume: bool = False):
     else:
         accelerator.print("Training from scratch.")
 
+    
+    # check whether weight_decay exists in config
+    if hasattr(config, "weight_decay"):
+        weight_decay = config.weight_decay
+    else:
+        weight_decay = 0
+
 
     # Optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay = weight_decay)
 
     # Scheduler
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -76,6 +83,12 @@ def train(config: ModelConfig, resume: bool = False):
             if epoch % 5 == 0:
                 os.makedirs("checkpoints", exist_ok=True)
                 torch.save(model.state_dict(), f"checkpoints/{epoch+1}.pth")
+
+        # if (epoch + 1) % 10 ==0:
+        #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        #         optimizer,
+        #         T_max=10
+        #     )
 
 
     # save final model
