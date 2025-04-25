@@ -8,8 +8,14 @@ from configs import ModelConfig, PATH, CONFIG_PATH, MODEL_PATH
 from tqdm import tqdm
 import os
 from accelerate import Accelerator
+import math
 
-
+def warmup_cosine_lr(epoch):
+    warmup_epochs = 10
+    if epoch < warmup_epochs:
+        return epoch / warmup_epochs # Linear warmup
+    else:
+        return 0.5 * (math.cos((epoch - warmup_epochs) / (100 - warmup_epochs) * math.pi) + 1)
 
 def train(config_path: str, model_path: str, resume: bool = False):
     config = ModelConfig.parse_from_file(config_path)
@@ -53,8 +59,13 @@ def train(config_path: str, model_path: str, resume: bool = False):
     # Scheduler
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=10
+        T_max=epochs
     )
+
+    # scheduler = torch.optim.lr_scheduler.LambdaLR(
+    #     optimizer,
+    #     lr_lambda=lambda epoch: warmup_cosine_lr(epoch)
+    # )
 
     model, optimizer, train_loader, scheduler = accelerator.prepare(
         model, optimizer, train_loader, scheduler
@@ -81,15 +92,9 @@ def train(config_path: str, model_path: str, resume: bool = False):
 
         # Save model checkpoint
         if accelerator.is_main_process:
-            if epoch % 5 == 0:
+            if epoch % 1 == 0:
                 os.makedirs("checkpoints", exist_ok=True)
                 torch.save(model.state_dict(), f"checkpoints/{epoch+1}.pth")
-
-        if (epoch + 1) % 10 ==0:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer,
-                T_max=10
-            )
 
 
     # save final model

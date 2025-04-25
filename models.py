@@ -666,7 +666,296 @@ class JEPA(nn.Module):
             
     
             
+# ----------------- JEPA2Dv1 -----------------
+class Encoder2Dv1(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
 
+        # Calculate the number of ResBlocks
+        self.num_blocks = config.num_block
+
+        layers = []
+        in_channel = 2
+        out_channel = config.out_channel    # initial output channel
+        num_resblock = config.num_resblock
+        emb_w = 65
+
+        # [B, 2, 65, 65] -> [B, _, 33, 33] -> [B, _, 17, 17] -> [B, _, 9, 9] -> [B, _, 5, 5]
+        for i in range(self.num_blocks):
+            layers.append(
+                nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=2, padding=1)
+            )
+
+            for j in range(num_resblock):
+                layers.append(
+                    ResBlock(out_channel, out_channel)
+                )
+
+            in_channel = out_channel
+            out_channel *= 2
+            emb_w = (emb_w + 1) // 2
+
+        
+        self.encoder = nn.Sequential(*layers)   
+        repr_dim  = out_channel // 2
+        
+        
+        
+    def forward(self, x, emb_pos=None):
+        """
+        Args: (B, 2, 65, 65)
+        Output: (B, 1, num_patches, repr_dim)
+        """
+
+        x = self.encoder(x) # (B, repr_dim, emb_w, emb_w)
+        B, C, emb_h, emb_w = x.shape
+        x = x.view(B, -1, C)  # (B, num_patches, repr_dim)
+        x = x + emb_pos
+        x = x.view(B, 1, -1, C) # (B, 1, num_patches, repr_dim)
+        return x
+            
+
+class Predictor2Dv1(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.hidden_channel = config.hidden_channel
+        self.emb_w = 65
+        for i in range(config.num_block):
+            self.emb_w = int((self.emb_w + 1) // 2)  # 65 -> 33 -> 17 -> 9 -> 5
+        
+        self.num_patches = self.emb_w * self.emb_w
+        self.repr_dim = config.out_channel * 2 **(config.num_block - 1)  # final output channel
+
+        self.mlp = nn.Sequential(
+            nn.Linear(self.repr_dim + 2, self.repr_dim),
+            nn.LayerNorm(self.repr_dim),
+            nn.ReLU(),
+            nn.Linear(self.repr_dim, self.repr_dim)
+        )
+
+
+
+    def forward(self, states, actions, emb_pos=None):
+        """
+        Args:
+          actions: (B, 1, 2)
+          states: (B, 1, num_patches, repr_dim)
+
+        Output: (B, 1, num_patches, repr_dim)
+        """
+        B, _, num_patches, repr_dim = states.shape
+        assert self.num_patches == num_patches, f"num_patches {self.num_patches} is not equal to num_patches {num_patches}"
+
+        action_emb = actions.repeat(1, num_patches, 1)  # (B, num_patches, 2)
+        action_emb = action_emb.view(B, 1, num_patches, 2)  # (B, 1, num_patches, 2)
+        states = states.view(B, num_patches, repr_dim)  # (B, num_patches, repr_dim)
+        states = states + emb_pos  # (B, num_patches, repr_dim)
+        states = states.view(B, 1, num_patches, repr_dim)  # (B, 1, num_patches, repr_dim)
+        x = torch.cat((states, action_emb), dim=-1) # (B, 1, num_patches, repr_dim + 2)
+        x = x.squeeze(1)     # (B, num_patches, repr_dim + 2)
+        x = x.view(B * num_patches, -1)  # (B * num_patches, repr_dim + 2)
+        x = self.mlp(x)
+        x = x.view(B, 1,  num_patches, -1)  # (B, 1, num_patches, repr_dim)
+        
+        return x
+    
+
+class Regularizer2Dv1(nn.Module):
+    def __init__(self, repr_dim):
+        super().__init__()
+        self.repr_dim = repr_dim
+
+        self.mlp = nn.Sequential(
+            nn.Linear(repr_dim, repr_dim),
+            nn.ReLU(),
+            nn.Linear(repr_dim, 2)
+        )
+
+    def forward(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T-1, 1, num_patches, repr_dim]
+            pred_states: [B, T-1, 1, num_patches, repr_dim]
+        Returns:
+            predicted_actions: [B*(T-1), 2]
+        """
+        # Remove the singleton dim
+        enc_states = enc_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+        pred_states = pred_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+
+        # Compute token-wise difference
+        delta = pred_states - enc_states  # [B, T-1, num_patches, repr_dim]
+
+        # Mean over tokens (per frame)
+        delta_mean = delta.mean(dim=2)  # [B, T-1, repr_dim]
+
+        # Flatten over batch and time
+        B, Tm1, _ = delta_mean.shape
+        delta_flat = delta_mean.view(B * Tm1, self.repr_dim)  # [B*(T-1), repr_dim]
+
+        # Predict action
+        action_pred = self.mlp(delta_flat)  # [B*(T-1), 2]
+
+        return action_pred
+
+
+
+class JEPA2Dv1(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.teacher_forcing = config.teacher_forcing
+        self.emb_w = 65
+        for i in range(config.num_block):
+            self.emb_w = int((self.emb_w + 1) // 2)  # 65 -> 33 -> 17 -> 9 -> 5
+
+        self.num_patches = self.emb_w * self.emb_w
+
+        repr_dim = config.out_channel * 2 ** (config.num_block - 1)  # final output channel
+
+
+        self.emb_pos = nn.Parameter(torch.randn(1, self.num_patches, repr_dim))  # [1, num_patches, repr_dim]
+
+        self.encoder = Encoder2Dv1(config)
+        self.predictor = Predictor2Dv1(config)
+
+
+        self.regularizer = Regularizer2Dv1(repr_dim)
+
+        self.repr_dim = repr_dim * self.num_patches  
+
+
+    def forward(self, states, actions):
+        """
+        Args:
+            actions: [B, T-1, 2]
+            states: [B, T, 2, 65, 65]
+
+        Output:
+            enc_states: [B, T, 1, num_patches, repr_dim], T: (s_0, s'_1, ..., s'_T)
+            pred_states: [B, T, 1, num_patches, repr_dim], T: (s_0, tilde{s_1}, ..., tilde{s_T})
+        """
+
+        self.actions = actions
+        self.states = states
+        B, T, C, H, W = states.shape
+        
+        if self.teacher_forcing and T >1:
+            states = states.view(B * T, C, H, W) # (B*T, 2, 65, 65)
+            
+            enc_states = self.encoder(states, self.emb_pos)  # (B*T, 1, num_patches, repr_dim)
+            _, _, emb_h, emb_w = enc_states.shape
+
+            enc_states = enc_states.view(B, T, 1, emb_h, emb_w) # (B, T, 1, num_patches, repr_dim)
+
+            # tensor for predictions
+            pred_states = torch.zeros((B, T, 1, emb_h, emb_w), device = enc_states.device)  # (B, T, 1, num_patches, repr_dim)
+            pred_states[:, 0] = enc_states[:, 0] # set the first state to the encoded state
+
+            # inputs for predictor
+            predictor_states = enc_states[:, :-1, :, :, :].contiguous() # (B, T-1, 1, num_patches, repr_dim)
+            predictor_states = predictor_states.view(B * (T - 1), 1, emb_h, emb_w)  # (B*(T-1), 1, num_patches, repr_dim)
+            actions = actions.view(B * (T - 1), 1, 2)   # (B*(T-1), 1, 2)
+
+            next_states = self.predictor(predictor_states, actions, self.emb_pos)  # (B*(T-1), 1, num_patches, repr_dim)
+            next_states = next_states.view(B, T - 1, 1, emb_h, emb_w)
+            pred_states[:, 1:] = next_states   # (B, T-1, 1, num_patches, repr_dim)
+
+            self.enc_states = enc_states
+            self.pred_states = pred_states 
+
+            return enc_states, pred_states
+        
+
+        elif T == 1:    # for inference
+            T = actions.shape[1]
+
+            enc_states = self.encoder(states[:, 0], self.emb_pos)  # (B, 1, num_patches, repr_dim) s_0
+            _, _, emb_h, emb_w = enc_states.shape
+
+            h = enc_states  # [B, 1, H, W]
+            h = h.unsqueeze(1)  # [B, 1, 1, H, W]
+            pred_states = [h]
+
+            for t in range(T):
+                action = actions[:, t].unsqueeze(1)  # [B, 1, 2]
+                h = self.predictor(h.squeeze(1), action, self.emb_pos)  # -> [B, 1, H, W]
+                h = h.unsqueeze(1)  # [B, 1, 1, H, W]
+                pred_states.append(h)
+
+            T = T + 1
+            pred_states = torch.cat(pred_states, dim=1)  # [B, T, 1, H, W]
+            pred_states = pred_states.view(B, T, emb_h * emb_w)  
+            return pred_states
+        
+        else:
+            # TODO
+            raise NotImplementedError("None Teacher Forcing is not implemented yet.")
+
+
+
+            
+
+        
+    def loss_mse(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+
+        Output:
+            loss: scalar
+        """
+
+        loss = F.mse_loss(enc_states[:, 1:], pred_states[:, :-1], reduction='mean')
+        return loss
+
+
+    def loss_vicreg(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+
+        Output:
+            loss: scalar
+        """
+        B, T, _, H, W = enc_states.shape
+        x = enc_states[:, 1:].reshape(B * (T - 1), -1)
+        y = pred_states[:, :-1].reshape(B * (T - 1), -1)
+
+        return vicreg_loss(x, y, self.config.sim_coeff, self.config.std_coeff, self.config.cov_coeff, self.config.eps)
+    
+
+    def loss_R(self, enc_states, pred_states, actions):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+            actions: [B, T-1, 2]
+
+        Output:
+            loss: scalar
+        """
+        
+        # Calculate the action regularization loss
+        predicted_actions = self.regularizer(enc_states[:, :-1], pred_states[:, 1:])  # [B(T-1), 2]
+        actions = actions.view(-1, 2)
+        loss = F.mse_loss(predicted_actions, actions, reduction='mean')
+        return loss
+    
+
+    def compute_loss(self):
+        """
+        Compute the loss for the model.
+        """
+        # Compute the loss
+        vicreg = self.loss_vicreg(self.enc_states, self.pred_states)
+        reg = self.loss_R(self.enc_states, self.pred_states, self.actions)
+        loss = vicreg + reg * self.config.reg_coeff
+        return loss
 
 
 
@@ -674,6 +963,7 @@ class JEPA(nn.Module):
 MODELS: dict = {
     # "Model_Name": Model_Class
     "JEPA2D": JEPA2D,
-    "JEPA": JEPA
+    "JEPA": JEPA,
+    "JEPA2Dv1": JEPA2Dv1
     # add models here
 }

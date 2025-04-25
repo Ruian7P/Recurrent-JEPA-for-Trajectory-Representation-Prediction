@@ -9,8 +9,8 @@ from omegaconf import OmegaConf
 DataClass = Any
 DataClassType = Any
 PATH = "./DL25SP"
-CONFIG_PATH = "./configs/JEPA2D_16_2_1_32_100_1e-5.yaml"
-MODEL_PATH = "./checkpoints/71.pth"
+CONFIG_PATH = "./configs/JEPA2Dv1_16_2_1_32_10_5e-4.yaml"
+MODEL_PATH = "./models/JEPA2Dv1_16_4_1_32_10_5e-4.pth"
 
 
 from typing import Any, Dict, Type, TypeVar, Union

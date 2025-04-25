@@ -1,0 +1,127 @@
+(NYUDL) ruian7p@Ruian7P:~/Projects/JEPA$ python train.py
+Config:
+ModelConfig(Model='JEPA2D', teacher_forcing=True, out_channel=16, num_block=2, num_resblock=1, hidden_channel=32, sim_coeff=25, std_coeff=25, cov_coeff=1, reg_coeff=25, eps=0.0001, batch_size=256, epochs=10, lr=1e-05)
+Epoch 1:   0%|                                                                                         | 0/574 [00:00<?, ?it/s]/home/ruian7p/Projects/JEPA/dataset.py:32: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_numpy.cpp:203.)
+  states = torch.from_numpy(self.states[i]).float().to(self.device)
+/home/ruian7p/Projects/JEPA/train.py:62: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /pytorch/aten/src/ATen/native/Scalar.cpp:22.)
+  epoch_loss += loss.item()
+Epoch 1: 100%|███████████████████████████████████████████████████████████████████████████████| 574/574 [01:54<00:00,  4.99it/s]
+Epoch 1, Loss: 56.20277210727386
+Epoch 2: 100%|███████████████████████████████████████████████████████████████████████████████| 574/574 [01:50<00:00,  5.21it/s]
+Epoch 2, Loss: 41.473730532549816
+Epoch 3: 100%|███████████████████████████████████████████████████████████████████████████████| 574/574 [01:50<00:00,  5.19it/s]
+Epoch 3, Loss: 29.15442942243835
+Epoch 4: 100%|███████████████████████████████████████████████████████████████████████████████| 574/574 [01:49<00:00,  5.23it/s]
+Epoch 4, Loss: 22.59095467092268
+Epoch 5: 100%|███████████████████████████████████████████████████████████████████████████████| 574/574 [01:52<00:00,  5.08it/s]
+Epoch 5, Loss: 20.792591772843735
+Epoch 6: 100%|███████████████████████████████████████████████████████████████████████████████| 574/574 [01:54<00:00,  5.02it/s]
+Epoch 6, Loss: 19.876711592857013
+Epoch 7: 100%|███████████████████████████████████████████████████████████████████████████████| 574/574 [01:49<00:00,  5.25it/s]
+Epoch 7, Loss: 19.28458379619213
+Epoch 8: 100%|███████████████████████████████████████████████████████████████████████████████| 574/574 [01:50<00:00,  5.20it/s]
+Epoch 8, Loss: 18.901629298406196
+Epoch 9: 100%|███████████████████████████████████████████████████████████████████████████████| 574/574 [01:49<00:00,  5.24it/s]
+Epoch 9, Loss: 18.74862328639014
+Epoch 10: 100%|██████████████████████████████████████████████████████████████████████████████| 574/574 [01:47<00:00,  5.34it/s]
+Epoch 10, Loss: 18.638001721079757
+Training complete!
+(NYUDL) ruian7p@Ruian7P:~/Projects/JEPA$ python main.py
+Using device: cuda
+Total Trainable Parameters: 30,954
+/home/ruian7p/Projects/JEPA/dataset.py:32: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /pytorch/torch/csrc/utils/tensor_numpy.cpp:203.)
+  states = torch.from_numpy(self.states[i]).float().to(self.device)
+Probe prediction epochs:   0%|                                                                          | 0/20 [00:00<?, ?it/s/home/ruian7p/Projects/JEPA/evaluator.py:160: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /pytorch/aten/src/ATen/native/Scalar.cpp:22.)
+  print(f"\nnormalized pred locations loss {per_probe_loss.item()}")
+
+normalized pred locations loss 1.1868633031845093
+
+normalized pred locations loss 0.795659601688385█████████████████████▋                       | 100/156 [00:04<00:02, 26.57it/s]
+Probe prediction step: 100%|█████████████████████████████████████████████████████████████████| 156/156 [00:05<00:00, 26.17it/s]
+Probe prediction epochs:   5%|███▎                                                              | 1/20 [00:05<01:53,  5.96s/it]
+normalized pred locations loss 0.42918661236763                                              | 43/156 [00:00<00:01, 104.79it/s]
+
+normalized pred locations loss 0.2577820420265198█████████████████████████████████████▎     | 142/156 [00:01<00:00, 109.34it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 107.31it/s]
+Probe prediction epochs:  10%|██████▌                                                           | 2/20 [00:07<00:59,  3.31s/it]
+normalized pred locations loss 0.22103479504585266██████████████▋                            | 88/156 [00:00<00:00, 109.50it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 108.81it/s]
+Probe prediction epochs:  15%|█████████▉                                                        | 3/20 [00:08<00:41,  2.45s/it]
+normalized pred locations loss 0.17471538484096527                                           | 22/156 [00:00<00:01, 109.87it/s]
+
+normalized pred locations loss 0.16838470101356506████████████████████████████              | 122/156 [00:01<00:00, 109.02it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 108.89it/s]
+Probe prediction epochs:  20%|█████████████▏                                                    | 4/20 [00:10<00:32,  2.05s/it]
+normalized pred locations loss 0.125034362077713███████▌                                     | 66/156 [00:00<00:00, 109.36it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 109.67it/s]
+Probe prediction epochs:  25%|████████████████▌                                                 | 5/20 [00:11<00:27,  1.82s/it]
+normalized pred locations loss 0.11737489700317383                                           | 11/156 [00:00<00:01, 109.75it/s]
+
+normalized pred locations loss 0.10101477056741714█████████████████████████▏                | 115/156 [00:01<00:00, 109.81it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 109.54it/s]
+Probe prediction epochs:  30%|███████████████████▊                                              | 6/20 [00:13<00:23,  1.69s/it]
+normalized pred locations loss 0.09225811064243317▉                                          | 55/156 [00:00<00:00, 107.65it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 107.16it/s]
+Probe prediction epochs:  35%|███████████████████████                                           | 7/20 [00:14<00:20,  1.61s/it]
+normalized pred locations loss 0.08393430709838867                                                     | 0/156 [00:00<?, ?it/s]
+
+normalized pred locations loss 0.06313621252775192███████████████████▎                       | 99/156 [00:00<00:00, 108.47it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 103.72it/s]
+Probe prediction epochs:  40%|██████████████████████████▍                                       | 8/20 [00:16<00:18,  1.58s/it]
+normalized pred locations loss 0.07327751815319061                                           | 44/156 [00:00<00:01, 108.92it/s]
+
+normalized pred locations loss 0.05486248433589935█████████████████████████████████████     | 144/156 [00:01<00:00, 109.54it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 109.20it/s]
+Probe prediction epochs:  45%|█████████████████████████████▋                                    | 9/20 [00:17<00:16,  1.53s/it]
+normalized pred locations loss 0.04735560342669487███████████████                            | 89/156 [00:00<00:00, 109.56it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 109.16it/s]
+Probe prediction epochs:  50%|████████████████████████████████▌                                | 10/20 [00:18<00:14,  1.50s/it]
+normalized pred locations loss 0.0521879605948925                                            | 34/156 [00:00<00:01, 109.96it/s]
+
+normalized pred locations loss 0.04955092445015907█████████████████████████████████▍        | 135/156 [00:01<00:00, 109.61it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 109.49it/s]
+Probe prediction epochs:  55%|███████████████████████████████████▊                             | 11/20 [00:20<00:13,  1.48s/it]
+normalized pred locations loss 0.04300385341048241██████████                                 | 77/156 [00:00<00:00, 108.87it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 108.57it/s]
+Probe prediction epochs:  60%|███████████████████████████████████████                          | 12/20 [00:21<00:11,  1.46s/it]
+normalized pred locations loss 0.049206171184778214                                          | 22/156 [00:00<00:01, 108.62it/s]
+
+normalized pred locations loss 0.040165409445762634██████████████████████████▋              | 121/156 [00:01<00:00, 108.88it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 108.59it/s]
+Probe prediction epochs:  65%|██████████████████████████████████████████▎                      | 13/20 [00:23<00:10,  1.46s/it]
+normalized pred locations loss 0.04006614536046982█████▌                                     | 66/156 [00:00<00:00, 108.45it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 108.84it/s]
+Probe prediction epochs:  70%|█████████████████████████████████████████████▌                   | 14/20 [00:24<00:08,  1.45s/it]
+normalized pred locations loss 0.04391840472817421                                           | 12/156 [00:00<00:01, 116.94it/s]
+
+normalized pred locations loss 0.038899507373571396█████████████████████▎                   | 108/156 [00:00<00:00, 116.94it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 116.63it/s]
+Probe prediction epochs:  75%|████████████████████████████████████████████████▊                | 15/20 [00:26<00:07,  1.42s/it]
+normalized pred locations loss 0.03941546380519867███                                        | 60/156 [00:00<00:00, 117.02it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 116.94it/s]
+Probe prediction epochs:  80%|████████████████████████████████████████████████████             | 16/20 [00:27<00:05,  1.39s/it]
+normalized pred locations loss 0.038808323442935944                                                    | 0/156 [00:00<?, ?it/s]
+
+normalized pred locations loss 0.04042331501841545██████████████████                         | 96/156 [00:00<00:00, 117.33it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 116.90it/s]
+Probe prediction epochs:  85%|███████████████████████████████████████████████████████▎         | 17/20 [00:28<00:04,  1.37s/it]
+normalized pred locations loss 0.05456404760479927                                           | 48/156 [00:00<00:00, 117.12it/s]
+
+normalized pred locations loss 0.042669907212257385████████████████████████████████████     | 144/156 [00:01<00:00, 117.48it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 116.98it/s]
+Probe prediction epochs:  90%|██████████████████████████████████████████████████████████▌      | 18/20 [00:30<00:02,  1.36s/it]
+normalized pred locations loss 0.037489309906959534████████████                              | 84/156 [00:00<00:00, 116.98it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 117.15it/s]
+Probe prediction epochs:  95%|█████████████████████████████████████████████████████████████▊   | 19/20 [00:31<00:01,  1.35s/it]
+normalized pred locations loss 0.04369153082370758                                           | 36/156 [00:00<00:01, 116.43it/s]
+
+normalized pred locations loss 0.03662140667438507████████████████████████████████▏         | 132/156 [00:01<00:00, 116.07it/s]
+Probe prediction step: 100%|████████████████████████████████████████████████████████████████| 156/156 [00:01<00:00, 115.97it/s]
+Probe prediction epochs: 100%|█████████████████████████████████████████████████████████████████| 20/20 [00:32<00:00,  1.63s/it]
+Eval probe pred: 100%|█████████████████████████████████████████████████████████████████████████| 62/62 [00:00<00:00, 64.43it/s]
+Eval probe pred: 100%|█████████████████████████████████████████████████████████████████████████| 62/62 [00:00<00:00, 64.00it/s]
+normal loss: 11.430245399475098
+wall loss: 12.994498252868652
+
