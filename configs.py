@@ -8,9 +8,9 @@ from omegaconf import OmegaConf
 
 DataClass = Any
 DataClassType = Any
-PATH = "./DL25SP"
-CONFIG_PATH = "./configs/JEPA2Dv1_16_2_1_32_10_5e-4.yaml"
-MODEL_PATH = "./models/JEPA2Dv1_16_4_1_32_10_5e-4.pth"
+PATH = "/mnt/f/DL25SP"
+CONFIG_PATH = "./configs/JEPA2DBregman_16_2_1_32_10_5e-4-4.yaml"
+MODEL_PATH = "./models/JEPA2DBregman_16_4_1_32_10_5e-4.pth"
 
 
 from typing import Any, Dict, Type, TypeVar, Union
@@ -155,6 +155,8 @@ class ModelConfig(ConfigBase):
     epochs: int = 20
     lr: float = 1e-3
     weight_decay: float = 0.0
+    bregman_mode: str = "mse"
+    
      
 
     

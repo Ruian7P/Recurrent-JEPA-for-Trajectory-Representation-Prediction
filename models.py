@@ -97,7 +97,7 @@ class ResBlock(nn.Module):
         out += self.shortcut(x)
         out = F.relu(out)
         return out
-    
+
 
 def off_diagonal(x):
     # Return a flattened view of the off-diagonal elements of a square matrix
@@ -128,6 +128,41 @@ def vicreg_loss(x, y, sim_coeff=25.0, std_coeff=25.0, cov_coeff=1.0, eps=1e-4):
 
     return sim_coeff * repr_loss + std_coeff * std_loss + cov_coeff * cov_loss
 
+
+def vicregl_loss(x, y, sim_coeff=25.0, std_coeff=25.0, cov_coeff=1.0, eps=1e-4):
+    B, T, _, H, W = x.shape
+    x = x[:, 1:].reshape(B * (T - 1), H * W, -1)
+    y = y[:, :-1].reshape(B * (T - 1), H * W, -1)
+    repr_loss = F.mse_loss(x, y)
+    std_x = torch.sqrt(x.var(dim=0, unbiased=False) + eps)
+    std_y = torch.sqrt(y.var(dim=0, unbiased=False) + eps)
+    std_loss = torch.mean(F.relu(1 - std_x)) + torch.mean(F.relu(1 - std_y))
+    x_centered = x - x.mean(dim=0, keepdim=True)
+    y_centered = y - y.mean(dim=0, keepdim=True)
+    cov_x = (x_centered.view(-1, x.shape[-1]).T @ x_centered.view(-1, x.shape[-1])) / (B * (T - 1) * H * W - 1)
+    cov_y = (y_centered.view(-1, y.shape[-1]).T @ y_centered.view(-1, y.shape[-1])) / (B * (T - 1) * H * W - 1)
+    cov_loss = off_diagonal(cov_x).pow_(2).sum() / x.shape[-1] + off_diagonal(cov_y).pow_(2).sum() / y.shape[-1]
+    return sim_coeff * repr_loss + std_coeff * std_loss + cov_coeff * cov_loss
+
+
+def bregman_vicreg_loss(x, y, mode="mse", sim_coeff=25.0, std_coeff=25.0, cov_coeff=1.0, eps=1e-4):
+    if mode == "mse":
+        repr_loss = F.mse_loss(x, y)
+    elif mode == "kl":
+        x_log_prob = F.log_softmax(x, dim=-1)
+        y_prob = F.softmax(y, dim=-1)
+        repr_loss = F.kl_div(x_log_prob, y_prob, reduction='batchmean')
+    else:
+        raise ValueError(f"Unsupported bregman mode: {mode}")
+    std_x = torch.sqrt(x.var(dim=0) + eps)
+    std_y = torch.sqrt(y.var(dim=0) + eps)
+    std_loss = torch.mean(F.relu(1 - std_x)) + torch.mean(F.relu(1 - std_y))
+    x = x - x.mean(dim=0)
+    y = y - y.mean(dim=0)
+    cov_x = (x.T @ x) / (x.shape[0] - 1)
+    cov_y = (y.T @ y) / (y.shape[0] - 1)
+    cov_loss = off_diagonal(cov_x).pow_(2).sum() / x.shape[1] + off_diagonal(cov_y).pow_(2).sum() / y.shape[1]
+    return sim_coeff * repr_loss + std_coeff * std_loss + cov_coeff * cov_loss
 
 
 # ----------------- JEPA2D -----------------
@@ -957,6 +992,283 @@ class JEPA2Dv1(nn.Module):
         loss = vicreg + reg * self.config.reg_coeff
         return loss
 
+# ------------------------------JEPA2D VicregL----------------------------------------
+class JEPA2DVicregL(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+        self.teacher_forcing = config.teacher_forcing
+
+        self.encoder = Encoder2D(config)
+        self.predictor = Predictor2D(config)
+        self.emb_w = 65
+        for i in range(config.num_block):
+            self.emb_w = int((self.emb_w + 1) // 2)  # 65 -> 33 -> 17 -> 9 -> 5
+
+        self.repr_dim = self.emb_w * self.emb_w
+
+        self.regularizer = Regularizer2D(self.repr_dim)
+
+    
+    def forward(self, states, actions):
+        """
+        Args:
+            actions: [B, T-1, 2]
+            states: [B, T, 2, 65, 65]
+
+        Output:
+            enc_states: [B, T, 1, emb_w, emb_w], T: (s_0, s'_1, ..., s'_T)
+            pred_states: [B, T, 1, emb_w, emb_w], T: (s_0, tilde{s_1}, ..., tilde{s_T})
+        """
+
+        self.actions = actions
+        self.states = states
+        B, T, C, H, W = states.shape
+        
+        if self.teacher_forcing and T >1:
+            states = states.view(B * T, C, H, W) # (B*T, 2, 65, 65)
+            
+            enc_states = self.encoder(states)  # (B*T, 1, emb_w, emb_w)
+            _, _, emb_h, emb_w = enc_states.shape
+
+            enc_states = enc_states.view(B, T, 1, emb_h, emb_w) # (B, T, 1, emb_w, emb_w)
+
+            # tensor for predictions
+            pred_states = torch.zeros((B, T, 1, emb_h, emb_w), device = enc_states.device)  # (B, T, 1, emb_w, emb_w)
+            pred_states[:, 0] = enc_states[:, 0] # set the first state to the encoded state
+
+            # inputs for predictor
+            predictor_states = enc_states[:, :-1, :, :, :].contiguous() # (B, T-1, 1, emb_w, emb_w)
+            predictor_states = predictor_states.view(B * (T - 1), 1, emb_h, emb_w)  # (B*(T-1), 1, emb_w, emb_w)
+            actions = actions.view(B * (T - 1), 1, 2)   # (B*(T-1), 1, 2)
+
+            next_states = self.predictor(predictor_states, actions)  # (B*(T-1), 1, emb_w, emb_w)
+            next_states = next_states.view(B, T - 1, 1, emb_h, emb_w)
+            pred_states[:, 1:] = next_states   # (B, T-1, 1, emb_w, emb_w)
+
+            self.enc_states = enc_states
+            self.pred_states = pred_states 
+
+            return enc_states, pred_states
+        
+
+        elif T == 1:    # for inference
+            T = actions.shape[1]
+
+            enc_states = self.encoder(states[:, 0])  # (B, 1, emb_w, emb_w) s_0
+            _, _, emb_h, emb_w = enc_states.shape
+
+            h = enc_states  # [B, 1, H, W]
+            h = h.unsqueeze(1)  # [B, 1, 1, H, W]
+            pred_states = [h]
+
+            for t in range(T):
+                action = actions[:, t].unsqueeze(1)  # [B, 1, 2]
+                h = self.predictor(h.squeeze(1), action)  # -> [B, 1, H, W]
+                h = h.unsqueeze(1)  # [B, 1, 1, H, W]
+                pred_states.append(h)
+
+            T = T + 1
+            pred_states = torch.cat(pred_states, dim=1)  # [B, T, 1, H, W]
+            pred_states = pred_states.view(B, T, emb_h * emb_w)  # [B, T, emb_dim]
+            return pred_states
+        
+        else:
+            # TODO
+            raise NotImplementedError("None Teacher Forcing is not implemented yet.")
+        
+    def loss_mse(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+
+        Output:
+            loss: scalar
+        """
+
+        loss = F.mse_loss(enc_states[:, 1:], pred_states[:, :-1], reduction='mean')
+        return loss
+
+    def loss_vicreg(self, enc_states, pred_states):
+        return vicregl_loss(
+            enc_states, pred_states,
+            sim_coeff=self.config.sim_coeff,
+            std_coeff=self.config.std_coeff,
+            cov_coeff=self.config.cov_coeff,
+            eps=self.config.eps,
+        )
+   
+
+    def loss_R(self, enc_states, pred_states, actions):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+            actions: [B, T-1, 2]
+
+        Output:
+            loss: scalar
+        """
+        
+        # Calculate the action regularization loss
+        predicted_actions = self.regularizer(enc_states[:, :-1], pred_states[:, 1:])  # [B(T-1), 2]
+        actions = actions.view(-1, 2)
+        loss = F.mse_loss(predicted_actions, actions, reduction='mean')
+        return loss
+    
+
+    def compute_loss(self):
+        """
+        Compute the loss for the model.
+        """
+        # Compute the loss
+        vicreg = self.loss_vicreg(self.enc_states, self.pred_states)
+        reg = self.loss_R(self.enc_states, self.pred_states, self.actions)
+        loss = vicreg + reg * self.config.reg_coeff
+        return loss
+
+
+# ------------------------------JEPA2D Bregman reg----------------------------------------
+class JEPA2DBregman(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+        self.teacher_forcing = config.teacher_forcing
+
+        self.encoder = Encoder2D(config)
+        self.predictor = Predictor2D(config)
+        self.emb_w = 65
+        for i in range(config.num_block):
+            self.emb_w = int((self.emb_w + 1) // 2)  # 65 -> 33 -> 17 -> 9 -> 5
+
+        self.repr_dim = self.emb_w * self.emb_w
+
+        self.regularizer = Regularizer2D(self.repr_dim)
+
+    
+    def forward(self, states, actions):
+        """
+        Args:
+            actions: [B, T-1, 2]
+            states: [B, T, 2, 65, 65]
+
+        Output:
+            enc_states: [B, T, 1, emb_w, emb_w], T: (s_0, s'_1, ..., s'_T)
+            pred_states: [B, T, 1, emb_w, emb_w], T: (s_0, tilde{s_1}, ..., tilde{s_T})
+        """
+
+        self.actions = actions
+        self.states = states
+        B, T, C, H, W = states.shape
+        
+        if self.teacher_forcing and T >1:
+            states = states.view(B * T, C, H, W) # (B*T, 2, 65, 65)
+            
+            enc_states = self.encoder(states)  # (B*T, 1, emb_w, emb_w)
+            _, _, emb_h, emb_w = enc_states.shape
+
+            enc_states = enc_states.view(B, T, 1, emb_h, emb_w) # (B, T, 1, emb_w, emb_w)
+
+            # tensor for predictions
+            pred_states = torch.zeros((B, T, 1, emb_h, emb_w), device = enc_states.device)  # (B, T, 1, emb_w, emb_w)
+            pred_states[:, 0] = enc_states[:, 0] # set the first state to the encoded state
+
+            # inputs for predictor
+            predictor_states = enc_states[:, :-1, :, :, :].contiguous() # (B, T-1, 1, emb_w, emb_w)
+            predictor_states = predictor_states.view(B * (T - 1), 1, emb_h, emb_w)  # (B*(T-1), 1, emb_w, emb_w)
+            actions = actions.view(B * (T - 1), 1, 2)   # (B*(T-1), 1, 2)
+
+            next_states = self.predictor(predictor_states, actions)  # (B*(T-1), 1, emb_w, emb_w)
+            next_states = next_states.view(B, T - 1, 1, emb_h, emb_w)
+            pred_states[:, 1:] = next_states   # (B, T-1, 1, emb_w, emb_w)
+
+            self.enc_states = enc_states
+            self.pred_states = pred_states 
+
+            return enc_states, pred_states
+        
+
+        elif T == 1:    # for inference
+            T = actions.shape[1]
+
+            enc_states = self.encoder(states[:, 0])  # (B, 1, emb_w, emb_w) s_0
+            _, _, emb_h, emb_w = enc_states.shape
+
+            h = enc_states  # [B, 1, H, W]
+            h = h.unsqueeze(1)  # [B, 1, 1, H, W]
+            pred_states = [h]
+
+            for t in range(T):
+                action = actions[:, t].unsqueeze(1)  # [B, 1, 2]
+                h = self.predictor(h.squeeze(1), action)  # -> [B, 1, H, W]
+                h = h.unsqueeze(1)  # [B, 1, 1, H, W]
+                pred_states.append(h)
+
+            T = T + 1
+            pred_states = torch.cat(pred_states, dim=1)  # [B, T, 1, H, W]
+            pred_states = pred_states.view(B, T, emb_h * emb_w)  # [B, T, emb_dim]
+            return pred_states
+        
+        else:
+            # TODO
+            raise NotImplementedError("None Teacher Forcing is not implemented yet.")
+        
+    def loss_mse(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+
+        Output:
+            loss: scalar
+        """
+
+        loss = F.mse_loss(enc_states[:, 1:], pred_states[:, :-1], reduction='mean')
+        return loss
+
+    def loss_vicreg(self, enc_states, pred_states):
+        B, T, _, H, W = enc_states.shape
+        x = enc_states[:, 1:].reshape(B * (T - 1), -1)
+        y = pred_states[:, :-1].reshape(B * (T - 1), -1)
+        return bregman_vicreg_loss(
+            x, y,
+            mode=self.config.bregman_mode,  # "mse" / "kl"
+            sim_coeff=self.config.sim_coeff,
+            std_coeff=self.config.std_coeff,
+            cov_coeff=self.config.cov_coeff,
+            eps=self.config.eps,
+        )
+
+    def loss_R(self, enc_states, pred_states, actions):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+            actions: [B, T-1, 2]
+
+        Output:
+            loss: scalar
+        """
+        
+        # Calculate the action regularization loss
+        predicted_actions = self.regularizer(enc_states[:, :-1], pred_states[:, 1:])  # [B(T-1), 2]
+        actions = actions.view(-1, 2)
+        loss = F.mse_loss(predicted_actions, actions, reduction='mean')
+        return loss
+    
+
+    def compute_loss(self):
+        """
+        Compute the loss for the model.
+        """
+        # Compute the loss
+        vicreg = self.loss_vicreg(self.enc_states, self.pred_states)
+        reg = self.loss_R(self.enc_states, self.pred_states, self.actions)
+        loss = vicreg + reg * self.config.reg_coeff
+        return loss
 
 
 # ---------------- Models -------------------
@@ -964,6 +1276,8 @@ MODELS: dict = {
     # "Model_Name": Model_Class
     "JEPA2D": JEPA2D,
     "JEPA": JEPA,
-    "JEPA2Dv1": JEPA2Dv1
+    "JEPA2Dv1": JEPA2Dv1, 
+    "JEPA2DVicregL": JEPA2DVicregL,
+    "JEPA2DBregman": JEPA2DBregman
     # add models here
 }
