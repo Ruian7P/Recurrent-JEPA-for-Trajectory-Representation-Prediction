@@ -5,6 +5,7 @@ from models import MockModel
 import glob
 from configs import PATH, CONFIG_PATH, MODEL_PATH, ModelConfig
 from models import MODELS
+import argparse
 
 
 def get_device():
@@ -46,13 +47,13 @@ def load_data(device):
     return probe_train_ds, probe_val_ds
 
 
-def load_model():
+def load_model(config_path, model_path):
     """Load or initialize the model."""
     # TODO: Replace MockModel with your trained model
-    config = ModelConfig.parse_from_file(CONFIG_PATH)
+    config = ModelConfig.parse_from_file(config_path)
     model_name = config.Model
     model = MODELS[model_name](config).to(device)
-    model.load_state_dict(torch.load(MODEL_PATH))
+    model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     return model
 
@@ -76,9 +77,22 @@ def evaluate_model(device, model, probe_train_ds, probe_val_ds):
         print(f"{probe_attr} loss: {loss}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--config", type=str, default=CONFIG_PATH, help="Path to the config file"
+    )
+    parser.add_argument(
+        "--model", type=str, default=MODEL_PATH, help="Path to the model file"
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = parse_args()
+
     device = get_device()
-    model = load_model()
+    model = load_model(args.config, args.model)
     
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total Trainable Parameters: {total_params:,}")

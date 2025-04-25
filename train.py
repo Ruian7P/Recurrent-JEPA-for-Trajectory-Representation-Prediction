@@ -11,7 +11,8 @@ from accelerate import Accelerator
 
 
 
-def train(config: ModelConfig, resume: bool = False):
+def train(config_path: str, model_path: str, resume: bool = False):
+    config = ModelConfig.parse_from_file(config_path)
 
     accelerator = Accelerator()
     device = accelerator.device
@@ -33,7 +34,7 @@ def train(config: ModelConfig, resume: bool = False):
     model = model(config).to(device)
 
     if resume:
-        model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+        model.load_state_dict(torch.load(model_path, map_location=device))
         accelerator.print(f"Model loaded from {MODEL_PATH}.")
     else:
         accelerator.print("Training from scratch.")
@@ -52,7 +53,7 @@ def train(config: ModelConfig, resume: bool = False):
     # Scheduler
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=epochs
+        T_max=10
     )
 
     model, optimizer, train_loader, scheduler = accelerator.prepare(
@@ -84,11 +85,11 @@ def train(config: ModelConfig, resume: bool = False):
                 os.makedirs("checkpoints", exist_ok=True)
                 torch.save(model.state_dict(), f"checkpoints/{epoch+1}.pth")
 
-        # if (epoch + 1) % 10 ==0:
-        #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        #         optimizer,
-        #         T_max=10
-        #     )
+        if (epoch + 1) % 10 ==0:
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=10
+            )
 
 
     # save final model
@@ -104,10 +105,15 @@ def parse_args():
     parser.add_argument(
         "--resume", action="store_true", help= "Resume training from saved model"
     )
+    parser.add_argument(
+        "--config", type=str, default=CONFIG_PATH, help="Path to the config file"
+    )
+    parser.add_argument(
+        "--model", type=str, default=MODEL_PATH, help="Path to the model file"
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    config = ModelConfig.parse_from_file(CONFIG_PATH)
-    train(config, resume=args.resume)
+    train(args.config, args.model, resume=args.resume)
