@@ -263,6 +263,7 @@ class JEPA2D(nn.Module):
         self.repr_dim = self.emb_w * self.emb_w
 
         self.regularizer = Regularizer2D(self.repr_dim)
+        self.noise = config.noise
 
 
     def forward(self, states, actions):
@@ -298,6 +299,8 @@ class JEPA2D(nn.Module):
             actions = actions.view(B * (T - 1), 1, 2)   # (B*(T-1), 1, 2)
 
             next_states = self.predictor(predictor_states, actions)  # (B*(T-1), 1, emb_w, emb_w)
+            next_states = next_states + self.noise * torch.randn_like(next_states)  # Add noise
+
             next_states = next_states.view(B, T - 1, 1, emb_h, emb_w)
             pred_states[:, 1:] = next_states   # (B, T-1, 1, emb_w, emb_w)
 
@@ -416,7 +419,7 @@ class Encoder(nn.Module):
         self.repr_dim = out_channel * 2 ** (self.num_blocks - 1)  # final output channel
         dropout = config.dropout
 
-        # [B, 2, 65, 65] -> [B, _, 33, 33] -> [B, _, 17, 17] -> [B, _, 9, 9] -> [B, _, 5, 5]
+        # [B, 2, 65, 65] -> [B, 16, 33, 33] -> [B, 32, 17, 17] -> [B, 64, 9, 9] -> [B, 128, 5, 5]
         for i in range(self.num_blocks):
             layers.append(
                 nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=2, padding=1)
@@ -1006,6 +1009,7 @@ class Predictor2Dv2(nn.Module):
             nn.Linear(self.emb_dim + 2, self.emb_dim),
             nn.LayerNorm(self.emb_dim),
             nn.ReLU(),
+            nn.Dropout(config.dropout),
             nn.Linear(self.emb_dim, self.emb_dim)
         )
 
@@ -1093,6 +1097,7 @@ class JEPA2Dv2(nn.Module):
         self.regularizer = Regularizer2Dv2(self.emb_dim)
 
         self.repr_dim = self.emb_dim * self.num_patches  
+        self.noise = config.noise
 
 
     def forward(self, states, actions):
@@ -1128,6 +1133,8 @@ class JEPA2Dv2(nn.Module):
             actions = actions.view(B * (T - 1), 1, 2)   # (B*(T-1), 1, 2)
 
             next_states = self.predictor(predictor_states, actions, self.emb_pos)  # (B*(T-1), 1, num_patches, emb_dim)
+            next_states = next_states + self.noise * torch.randn_like(next_states)  # Add noise
+
             next_states = next_states.view(B, T - 1, 1, emb_h, emb_w)
             pred_states[:, 1:] = next_states   # (B, T-1, 1, num_patches, emb_dim)
 
