@@ -1,0 +1,16 @@
+Model: "JEPA2Dv2"
+teacher_forcing: true
+
+out_channel: 128
+patch_size: 5
+
+sim_coeff: 25
+std_coeff: 25
+cov_coeff: 1
+reg_coeff: 25
+eps: 1e-4
+
+batch_size: 512
+epochs: 10
+lr: 1e-3
+weight_decay: 5e-4

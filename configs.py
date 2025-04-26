@@ -9,8 +9,8 @@ from omegaconf import OmegaConf
 DataClass = Any
 DataClassType = Any
 PATH = "./DL25SP"
-CONFIG_PATH = "./configs/JEPA2Dv1_16_2_1_32_10_5e-4.yaml"
-MODEL_PATH = "./models/JEPA2Dv1_16_4_1_32_10_5e-4.pth"
+CONFIG_PATH = "./configs/JEPA2D_16_2_1_32_10_1e-5.yaml"
+MODEL_PATH = "./models/JEPA2Dv2_128_5_10_1e-3.pth"
 
 
 from typing import Any, Dict, Type, TypeVar, Union
@@ -134,9 +134,10 @@ class ModelConfig(ConfigBase):
 
 
     # Encoder parameters
-    out_channel: int = 32     # initial output channel: [16, 32, 64] 
+    out_channel: int = 32     # initial output channel: [16, 32, 64] ; or emb_dim
     num_block: int = 4      # number of EncoderBlock: [1, 2, 3, 4] -> [33, 17, 9, 5]
     num_resblock: int = 2     # number of ResBlock: [1, 2, 3]
+    patch_size: int = 5     # patch size: [5, 13]
 
 
     # Predictor parameters
@@ -155,6 +156,6 @@ class ModelConfig(ConfigBase):
     epochs: int = 20
     lr: float = 1e-3
     weight_decay: float = 0.0
-     
+    dropout: float = 0.0
 
     
