@@ -8,9 +8,9 @@ from omegaconf import OmegaConf
 
 DataClass = Any
 DataClassType = Any
-PATH = "./DL25SP"
-CONFIG_PATH = "./configs/JEPA2Dv2_64_5_15_1e-3.yaml"
-MODEL_PATH = "./models/JEPA2Dv2_64_5_15_1e-3.pth"
+PATH = "/mnt/f/DL25SP"
+CONFIG_PATH = "./configs/LightWeightJEPA2D_16_2_1_32_10_1e-5.yaml"
+MODEL_PATH = "/mnt/c/Users/flapp/Desktop/dsga1008/JEPA/checkpoints/5.pth"
 
 
 from typing import Any, Dict, Type, TypeVar, Union
@@ -131,7 +131,7 @@ class ModelConfig(ConfigBase):
     # Model parameters
     Model: str = "JEPA2D"
     teacher_forcing: bool = True
-
+    final_out_channel: int = 16
 
     # Encoder parameters
     out_channel: int = 32     # initial output channel: [16, 32, 64] ; or emb_dim

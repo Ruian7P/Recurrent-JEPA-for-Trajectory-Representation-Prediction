@@ -1232,6 +1232,216 @@ class JEPA2Dv2(nn.Module):
         loss = vicreg + reg * self.config.reg_coeff
         return loss
 
+# ----------------- LightWeightJEPA2D -----------------
+class LightEncoder2D(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+        self.num_blocks = config.num_block
+
+        layers = []
+        in_channel = 2
+        out_channel = config.out_channel
+        dropout = config.dropout
+
+        # conv2d(in, out) -> batchrelu -> depthstackedconv -> 
+        for i in range(self.num_blocks):
+            layers.append(
+                nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=2, padding=1)
+            )
+            layers.append(nn.BatchNorm2d(out_channel))
+            layers.append(nn.ReLU())
+            layers.append(
+                DepthwiseSeparableConv(out_channel, out_channel, dropout)
+            )
+            in_channel = out_channel
+            # propagate depth 
+            out_channel = int(out_channel * 1.5)
+
+        self.final_out_channel = config.final_out_channel
+        layers.append(nn.Conv2d(in_channel, self.final_out_channel, kernel_size=1))
+        self.encoder = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.encoder(x)
+
+
+class DepthwiseSeparableConv(nn.Module):
+    def __init__(self, in_channel, out_channel, dropout=0.0):
+        super().__init__()
+        self.depthwise = nn.Conv2d(in_channel, in_channel, kernel_size=3, padding=1, groups=in_channel)
+        self.pointwise = nn.Conv2d(in_channel, out_channel, kernel_size=1)
+        self.bn = nn.BatchNorm2d(out_channel)
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        x = self.depthwise(x)
+        x = self.pointwise(x)
+        x = self.bn(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        return x
+
+
+# ----------------- Predictor -----------------
+class LightPredictor2D(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.emb_dim = config.final_out_channel
+        self.hidden_dim = config.hidden_channel
+
+        self.conv1 = nn.Conv2d(self.emb_dim, self.hidden_dim, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(self.hidden_dim)
+        self.relu = nn.ReLU()
+
+        self.action_fc = nn.Linear(2, self.hidden_dim)
+
+        self.conv2 = nn.Conv2d(self.hidden_dim, self.hidden_dim, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(self.hidden_dim)
+
+        self.out_conv = nn.Conv2d(self.hidden_dim, self.emb_dim, kernel_size=1)
+
+    def forward(self, h, actions):
+        B, C, H, W = h.shape
+
+        x = self.relu(self.bn1(self.conv1(h)))
+
+        a = self.action_fc(actions.squeeze(1))
+        a = a.unsqueeze(-1).unsqueeze(-1)
+        a = a.expand(-1, -1, H, W)
+
+        x = x + a
+
+        x = self.relu(self.bn2(self.conv2(x)))
+
+        out = self.out_conv(x)
+        return out
+
+
+# ----------------- Regularizer -----------------
+class Regularizer2D(nn.Module):
+    def __init__(self, repr_dim, emb_channel):
+        super().__init__()
+        self.emb_w = int(math.sqrt(repr_dim // emb_channel))
+        self.emb_channel = emb_channel
+
+        self.reduce_conv = nn.Conv2d(emb_channel, 1, kernel_size=1)
+
+        self.action_reg_net = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(16, 1, kernel_size=3, padding=1),
+            nn.Flatten(),
+            nn.Linear(self.emb_w * self.emb_w, 2),
+        )
+
+    def forward(self, enc_states, pred_states):
+        embedding_diff = pred_states - enc_states
+        embedding_diff = embedding_diff.view(-1, self.emb_channel, self.emb_w, self.emb_w)
+
+        embedding_diff = self.reduce_conv(embedding_diff)
+
+        predicted_actions = self.action_reg_net(embedding_diff)
+        return predicted_actions
+
+
+# ----------------- JEPA2D -----------------
+class LightWeightJEPA2D(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+        self.teacher_forcing = config.teacher_forcing
+
+        self.encoder = LightEncoder2D(config)
+        self.predictor = LightPredictor2D(config)
+
+        self.emb_w = 65
+        for i in range(config.num_block):
+            self.emb_w = int((self.emb_w + 1) // 2)
+
+        self.emb_dim = config.final_out_channel
+        self.repr_dim = self.emb_dim * self.emb_w * self.emb_w
+
+        self.regularizer = Regularizer2D(self.repr_dim, config.final_out_channel)
+        self.noise = config.noise
+
+    def forward(self, states, actions):
+        self.actions = actions
+        self.states = states
+        B, T, C, H, W = states.shape
+
+        if self.teacher_forcing and T > 1:
+            states = states.view(B * T, C, H, W)
+            enc_states = self.encoder(states)
+            _, emb_dim, emb_h, emb_w = enc_states.shape
+
+            enc_states = enc_states.view(B, T, emb_dim, emb_h, emb_w)
+
+            pred_states = torch.zeros((B, T, emb_dim, emb_h, emb_w), device=enc_states.device)
+            pred_states[:, 0] = enc_states[:, 0]
+
+            predictor_states = enc_states[:, :-1].contiguous()
+            predictor_states = predictor_states.view(B * (T - 1), emb_dim, emb_h, emb_w)
+            actions = actions.view(B * (T - 1), 1, 2)
+
+            next_states = self.predictor(predictor_states, actions)
+            next_states = next_states + self.noise * torch.randn_like(next_states)
+
+            next_states = next_states.view(B, T - 1, emb_dim, emb_h, emb_w)
+            pred_states[:, 1:] = next_states
+
+            self.enc_states = enc_states
+            self.pred_states = pred_states
+
+            return enc_states, pred_states
+
+        elif T == 1:
+            T = actions.shape[1]
+            enc_states = self.encoder(states[:, 0])
+            _, emb_dim, emb_h, emb_w = enc_states.shape
+
+            h = enc_states.unsqueeze(1)
+            pred_states = [h]
+
+            for t in range(T):
+                action = actions[:, t].unsqueeze(1)
+                h = self.predictor(h.squeeze(1), action)
+                h = h.unsqueeze(1)
+                pred_states.append(h)
+
+            T = T + 1
+            pred_states = torch.cat(pred_states, dim=1)
+            pred_states = pred_states.view(B, T, emb_dim * emb_h * emb_w)
+            return pred_states
+
+        else:
+            raise NotImplementedError("None Teacher Forcing is not implemented yet.")
+
+    def loss_mse(self, enc_states, pred_states):
+        loss = F.mse_loss(enc_states[:, 1:], pred_states[:, :-1], reduction='mean')
+        return loss
+
+    def loss_vicreg(self, enc_states, pred_states):
+        B, T, C, H, W = enc_states.shape
+        x = enc_states[:, 1:].reshape(B * (T - 1), -1)
+        y = pred_states[:, :-1].reshape(B * (T - 1), -1)
+
+        return vicreg_loss(x, y, self.config.sim_coeff, self.config.std_coeff, self.config.cov_coeff, self.config.eps)
+
+    def loss_R(self, enc_states, pred_states, actions):
+        predicted_actions = self.regularizer(enc_states[:, :-1], pred_states[:, 1:])
+        actions = actions.view(-1, 2)
+        loss = F.mse_loss(predicted_actions, actions, reduction='mean')
+        return loss
+
+    def compute_loss(self):
+        vicreg = self.loss_vicreg(self.enc_states, self.pred_states)
+        reg = self.loss_R(self.enc_states, self.pred_states, self.actions)
+        loss = vicreg + reg * self.config.reg_coeff
+        return loss
 
 
 
@@ -1241,6 +1451,7 @@ MODELS: dict = {
     "JEPA2D": JEPA2D,
     "JEPA": JEPA,
     "JEPA2Dv1": JEPA2Dv1,
-    "JEPA2Dv2": JEPA2Dv2
+    "JEPA2Dv2": JEPA2Dv2,
+    "LightWeightJEPA2D": LightWeightJEPA2D
     # add models here
 }
