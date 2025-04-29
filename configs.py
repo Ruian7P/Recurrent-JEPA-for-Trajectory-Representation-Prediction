@@ -9,8 +9,8 @@ from omegaconf import OmegaConf
 DataClass = Any
 DataClassType = Any
 PATH = "./DL25SP"
-CONFIG_PATH = "./configs/JEPA2Dv2_64_5_15_1e-3.yaml"
-MODEL_PATH = "./models/JEPA2Dv2_64_5_15_1e-3.pth"
+CONFIG_PATH = "./configs/JEPA2Dv2B_64.yaml"
+MODEL_PATH = "./models/JEPA2Dv2B_64.pth"
 
 
 from typing import Any, Dict, Type, TypeVar, Union
@@ -142,6 +142,7 @@ class ModelConfig(ConfigBase):
 
     # Predictor parameters
     hidden_channel: int = 32   # hidden channel: [16, 32, 64]
+    num_heads: int = 1    # number of heads: [1, 2, 4]
 
     # Loss parameters
     r: str = 'diff'         # ['diff', 'mean']
@@ -149,6 +150,7 @@ class ModelConfig(ConfigBase):
     std_coeff: float = 25
     cov_coeff: float = 1
     reg_coeff: float = 25
+    byol_coeff: float = 0.0
     eps: float = 1e-4
 
 

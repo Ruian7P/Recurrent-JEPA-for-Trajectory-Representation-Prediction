@@ -4,6 +4,7 @@ from torch import nn
 from torch.nn import functional as F
 import torch
 import math
+import copy
 
 
 
@@ -665,7 +666,7 @@ class JEPA(nn.Module):
         return loss
 
          
-    def compute_loss(self):
+    def compute_loss(self, print_loss=False):
         """
         Compute the loss for the model.
         """
@@ -673,6 +674,9 @@ class JEPA(nn.Module):
         vicreg = self.loss_vicreg(self.enc_states, self.pred_states)
         reg = self.loss_R(self.enc_states, self.pred_states, self.actions)
         loss = vicreg + reg * self.config.reg_coeff 
+
+        if print_loss:
+            print(f"loss: {loss.item():.4f}, vicreg: {vicreg.item():.4f}, reg: {reg.item() * self.config.reg_coeff:.4f}")
         return loss
             
     
@@ -958,7 +962,7 @@ class JEPA2Dv1(nn.Module):
         return loss
     
 
-    def compute_loss(self):
+    def compute_loss(self, print_loss = False):
         """
         Compute the loss for the model.
         """
@@ -966,6 +970,9 @@ class JEPA2Dv1(nn.Module):
         vicreg = self.loss_vicreg(self.enc_states, self.pred_states)
         reg = self.loss_R(self.enc_states, self.pred_states, self.actions)
         loss = vicreg + reg * self.config.reg_coeff
+
+        if print_loss:
+            print(f"loss: {loss.item():.4f}, vicreg: {vicreg.item():.4f}, reg: {reg.item() * self.config.reg_coeff:.4f}")
         return loss
 
 
@@ -1041,17 +1048,25 @@ class Predictor2Dv2(nn.Module):
     
 
 class Regularizer2Dv2(nn.Module):
-    def __init__(self, repr_dim):
+    def __init__(self, repr_dim, r = 'diff'):
         super().__init__()
         self.repr_dim = repr_dim
 
-        self.mlp = nn.Sequential(
-            nn.Linear(repr_dim, repr_dim),
-            nn.ReLU(),
-            nn.Linear(repr_dim, 2)
-        )
+        if r == 'diff':
+            self.mlp = nn.Sequential(
+                nn.Linear(repr_dim, repr_dim),
+                nn.ReLU(),
+                nn.Linear(repr_dim, 2)
+            )
+        elif r == 'mean':
+            self.mlp = nn.Sequential(
+                nn.Linear(repr_dim * 2, repr_dim),
+                nn.ReLU(),
+                nn.Linear(repr_dim, 2)
+            )
 
-    def forward(self, enc_states, pred_states):
+
+    def forward(self, enc_states, pred_states, r = 'diff'):
         """
         Args:
             enc_states: [B, T-1, 1, num_patches, repr_dim]
@@ -1059,24 +1074,39 @@ class Regularizer2Dv2(nn.Module):
         Returns:
             predicted_actions: [B*(T-1), 2]
         """
-        # Remove the singleton dim
-        enc_states = enc_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
-        pred_states = pred_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
 
-        # Compute token-wise difference
-        delta = pred_states - enc_states  # [B, T-1, num_patches, repr_dim]
+        if r == 'diff':
+            # Remove the singleton dim
+            enc_states = enc_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+            pred_states = pred_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
 
-        # Mean over tokens (per frame)
-        delta_mean = delta.mean(dim=2)  # [B, T-1, repr_dim]
+            # Compute token-wise difference
+            delta = pred_states - enc_states  # [B, T-1, num_patches, repr_dim]
 
-        # Flatten over batch and time
-        B, Tm1, _ = delta_mean.shape
-        delta_flat = delta_mean.view(B * Tm1, self.repr_dim)  # [B*(T-1), repr_dim]
+            # Mean over tokens (per frame)
+            delta_mean = delta.mean(dim=2)  # [B, T-1, repr_dim]
 
-        # Predict action
-        action_pred = self.mlp(delta_flat)  # [B*(T-1), 2]
+            # Flatten over batch and time
+            B, Tm1, _ = delta_mean.shape
+            delta_flat = delta_mean.view(B * Tm1, self.repr_dim)  # [B*(T-1), repr_dim]
 
-        return action_pred
+            # Predict action
+            action_pred = self.mlp(delta_flat)  # [B*(T-1), 2]
+
+            return action_pred
+        
+        if r == 'mean':
+            enc_states = enc_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+            pred_states = pred_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+
+            h = torch.cat((enc_states, pred_states), dim=-1) # [B, T-1, num_patches, 2*repr_dim]
+            h = h.mean(dim=2)  # [B, T-1, 2*repr_dim]
+
+            B, Tm1, D = h.shape
+            h = h.view(B * Tm1, D)  # [B*(T-1), 2 *repr_dim]
+
+            pred_action = self.mlp(h)  # [B*(T-1), 2]
+            return pred_action
 
 
 
@@ -1094,7 +1124,7 @@ class JEPA2Dv2(nn.Module):
         self.predictor = Predictor2Dv2(config)
 
 
-        self.regularizer = Regularizer2Dv2(self.emb_dim)
+        self.regularizer = Regularizer2Dv2(self.emb_dim, config.r)
 
         self.repr_dim = self.emb_dim * self.num_patches  
         self.noise = config.noise
@@ -1216,13 +1246,13 @@ class JEPA2Dv2(nn.Module):
         """
         
         # Calculate the action regularization loss
-        predicted_actions = self.regularizer(enc_states[:, :-1], pred_states[:, 1:])  # [B(T-1), 2]
+        predicted_actions = self.regularizer(enc_states[:, :-1], pred_states[:, 1:], self.config.r)  # [B(T-1), 2]
         actions = actions.view(-1, 2)
         loss = F.mse_loss(predicted_actions, actions, reduction='mean')
         return loss
     
 
-    def compute_loss(self):
+    def compute_loss(self, print_loss = False):
         """
         Compute the loss for the model.
         """
@@ -1230,7 +1260,680 @@ class JEPA2Dv2(nn.Module):
         vicreg = self.loss_vicreg(self.enc_states, self.pred_states)
         reg = self.loss_R(self.enc_states, self.pred_states, self.actions)
         loss = vicreg + reg * self.config.reg_coeff
+
+        if print_loss:
+            print(f"loss: {loss.item():.4f}, vicreg: {vicreg.item():.4f}, reg: {reg.item() * self.config.reg_coeff:.4f}")
         return loss
+
+
+
+
+# ----------------- JEPA2Da1 -----------------
+class Encoder2Da1(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+        out_channel = config.out_channel   
+        self.patch_size = config.patch_size
+        self.num_patches = (65 // self.patch_size) ** 2
+
+        self.proj = nn.Conv2d(2, out_channel, kernel_size = self.patch_size, stride = self.patch_size)  
+        
+        
+    def forward(self, x, emb_pos=None):
+        """
+        Args: (B, 2, 65, 65)
+        Output: (B, 1, num_patches, emb_dim)
+        """
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        B, num_patches, emb_dim =x.shape
+        x = x.view(B, 1, num_patches, emb_dim)  # (B, 1, num_patches, emb_dim)
+
+        return x
+            
+
+class Predictor2Da1(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.hidden_channel = config.hidden_channel
+        self.num_patches = (65 // config.patch_size) ** 2
+        self.emb_dim = config.out_channel
+        self.dropout = config.dropout
+        self.num_heads = config.num_heads
+
+        self.fc = nn.Sequential(
+            nn.Linear(2, self.emb_dim//2),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.emb_dim//2, self.emb_dim)
+        )
+
+        self.project = nn.Linear(self.emb_dim*2, self.emb_dim)
+
+        self.norm1 = nn.LayerNorm(self.emb_dim)
+        self.norm2 = nn.LayerNorm(self.emb_dim)
+
+        self.attention = nn.MultiheadAttention(
+            embed_dim=self.emb_dim,
+            num_heads=self.num_heads,
+            dropout=self.dropout,
+            batch_first=True
+        )
+
+        self.ffn = nn.Sequential(
+            nn.Linear(self.emb_dim, self.emb_dim),
+            nn.GELU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.emb_dim, self.emb_dim),
+            nn.Dropout(self.dropout)
+        )
+
+        self.apply(self._init_weights)
+
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+
+    def forward(self, states, actions, emb_pos=None):
+        """
+        Args:
+          actions: (B, 1, 2)
+          states: (B, 1, num_patches, emb_dim)
+          emb_pos: (1, num_patches, emb_dim)
+
+        Output: (B, 1, num_patches, emb_dim)
+        """
+        B, _, num_patches, emb_dim = states.shape
+        assert self.num_patches == num_patches, f"num_patches {self.num_patches} is not equal to num_patches {num_patches}"
+
+        states = states.view(B, num_patches, emb_dim)  # (B, num_patches, emb_dim)
+        if emb_pos is not None:
+            states = states + emb_pos
+        
+        action = actions.view(B, 2)  # (B, 2)
+        emb_action = self.fc(action)  # (B, emb_dim)
+
+        emb_action = emb_action.view(B, 1, emb_dim)  # (B, 1, emb_dim)
+        emb_action = emb_action.expand(-1, num_patches, -1)  # (B, num_patches, emb_dim)
+
+        states = torch.cat((states, emb_action), dim=-1) # (B, num_patches, emb_dim* 2)
+        states = self.project(states)  # (B, num_patches, emb_dim)
+
+        x = self.norm1(states)  # (B, num_patches, emb_dim)
+        attention,_ = self.attention(x, x, x) # (B, num_patches, emb_dim)
+        states = 0 *states + attention  # (B, num_patches, emb_dim)
+
+        x = self.norm2(states)  # (B, num_patches, emb_dim)
+        x = self.ffn(x)  # (B, num_patches, emb_dim)
+        x = 0 * states + x  # (B, num_patches, emb_dim)
+
+        x = x.view(B, 1, num_patches, emb_dim)  # (B, 1, num_patches, emb_dim)
+
+        return x
+    
+
+class Regularizer2Da1(nn.Module):
+    def __init__(self, repr_dim, config):
+        super().__init__()
+        self.repr_dim = repr_dim
+        self.config = config
+        self.r = self.config.r
+
+        if self.r == 'diff':
+            self.mlp = nn.Sequential(
+                nn.Linear(repr_dim, repr_dim),
+                nn.ReLU(),
+                nn.Linear(repr_dim, 2)
+            )
+        elif self.r == 'mean':
+            self.mlp = nn.Sequential(
+                nn.Linear(repr_dim * 2, repr_dim),
+                nn.ReLU(),
+                nn.Linear(repr_dim, 2)
+            )
+
+
+    def forward(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T-1, 1, num_patches, repr_dim]
+            pred_states: [B, T-1, 1, num_patches, repr_dim]
+        Returns:
+            predicted_actions: [B*(T-1), 2]
+        """
+
+        if self.r == 'diff':
+            # Remove the singleton dim
+            enc_states = enc_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+            pred_states = pred_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+
+            # Compute token-wise difference
+            delta = pred_states - enc_states  # [B, T-1, num_patches, repr_dim]
+
+            # Mean over tokens (per frame)
+            delta_mean = delta.mean(dim=2)  # [B, T-1, repr_dim]
+
+            # Flatten over batch and time
+            B, Tm1, _ = delta_mean.shape
+            delta_flat = delta_mean.view(B * Tm1, self.repr_dim)  # [B*(T-1), repr_dim]
+
+            # Predict action
+            action_pred = self.mlp(delta_flat)  # [B*(T-1), 2]
+
+            return action_pred
+        
+        if self.r == 'mean':
+            enc_states = enc_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+            pred_states = pred_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+
+            h = torch.cat((enc_states, pred_states), dim=-1) # [B, T-1, num_patches, 2*repr_dim]
+            h = h.mean(dim=2)  # [B, T-1, 2*repr_dim]
+
+            B, Tm1, D = h.shape
+            h = h.view(B * Tm1, D)  # [B*(T-1), 2 *repr_dim]
+
+            pred_action = self.mlp(h)  # [B*(T-1), 2]
+            return pred_action
+
+
+
+class JEPA2Da1(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.teacher_forcing = config.teacher_forcing
+        self.num_patches = (65 // config.patch_size) ** 2
+        self.emb_dim = config.out_channel
+
+        self.emb_pos = nn.Parameter(torch.randn(1, self.num_patches, self.emb_dim))  # [1, num_patches, emb_dim]
+
+        self.encoder = Encoder2Da1(config)
+        self.predictor = Predictor2Da1(config)
+
+
+        self.regularizer = Regularizer2Da1(self.emb_dim, config)
+
+        self.repr_dim = self.emb_dim * self.num_patches  
+        self.noise = config.noise
+
+
+    def forward(self, states, actions):
+        """
+        Args:
+            actions: [B, T-1, 2]
+            states: [B, T, 2, 65, 65]
+
+        Output:
+            enc_states: [B, T, 1, num_patches, emb_dim], T: (s_0, s'_1, ..., s'_T)
+            pred_states: [B, T, 1, num_patches, emb_dim], T: (s_0, tilde{s_1}, ..., tilde{s_T})
+        """
+
+        self.actions = actions
+        self.states = states
+        B, T, C, H, W = states.shape
+        
+        if self.teacher_forcing and T >1:
+            states = states.view(B * T, C, H, W) # (B*T, 2, 65, 65)
+            
+            enc_states = self.encoder(states, self.emb_pos)  # (B*T, 1, num_patches, emb_dim)
+            _, _, emb_h, emb_w = enc_states.shape
+
+            enc_states = enc_states.view(B, T, 1, emb_h, emb_w) # (B, T, 1, num_patches, emb_dim)
+
+            # tensor for predictions
+            pred_states = torch.zeros((B, T, 1, emb_h, emb_w), device = enc_states.device)  # (B, T, 1, num_patches, emb_dim)
+            pred_states[:, 0] = enc_states[:, 0] # set the first state to the encoded state
+
+            # inputs for predictor
+            predictor_states = enc_states[:, :-1, :, :, :].contiguous() # (B, T-1, 1, num_patches, emb_dim)
+            predictor_states = predictor_states.view(B * (T - 1), 1, emb_h, emb_w)  # (B*(T-1), 1, num_patches, emb_dim)
+            actions = actions.view(B * (T - 1), 1, 2)   # (B*(T-1), 1, 2)
+
+            next_states = self.predictor(predictor_states, actions, self.emb_pos)  # (B*(T-1), 1, num_patches, emb_dim)
+            next_states = next_states + self.noise * torch.randn_like(next_states)  # Add noise
+
+            next_states = next_states.view(B, T - 1, 1, emb_h, emb_w)
+            pred_states[:, 1:] = next_states   # (B, T-1, 1, num_patches, emb_dim)
+
+            self.enc_states = enc_states
+            self.pred_states = pred_states 
+
+            return enc_states, pred_states
+        
+
+        elif T == 1:    # for inference
+            T = actions.shape[1]
+
+            enc_states = self.encoder(states[:, 0], self.emb_pos)  # (B, 1, num_patches, emb_dim) s_0
+            _, _, emb_h, emb_w = enc_states.shape
+
+            h = enc_states  # [B, 1, H, W]
+            h = h.unsqueeze(1)  # [B, 1, 1, H, W]
+            pred_states = [h]
+
+            for t in range(T):
+                action = actions[:, t].unsqueeze(1)  # [B, 1, 2]
+                h = self.predictor(h.squeeze(1), action, self.emb_pos)  # -> [B, 1, H, W]
+                h = h.unsqueeze(1)  # [B, 1, 1, H, W]
+                pred_states.append(h)
+
+            T = T + 1
+            pred_states = torch.cat(pred_states, dim=1)  # [B, T, 1, H, W]
+            pred_states = pred_states.view(B, T, emb_h * emb_w)  
+            return pred_states
+        
+        else:
+            # TODO
+            raise NotImplementedError("None Teacher Forcing is not implemented yet.")
+
+            
+
+        
+    def loss_mse(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+
+        Output:
+            loss: scalar
+        """
+
+        loss = F.mse_loss(enc_states[:, 1:], pred_states[:, :-1], reduction='mean')
+        return loss
+
+
+    def loss_vicreg(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+
+        Output:
+            loss: scalar
+        """
+        B, T, _, H, W = enc_states.shape
+        x = enc_states[:, 1:].reshape(B * (T - 1), -1)
+        y = pred_states[:, :-1].reshape(B * (T - 1), -1)
+
+        return vicreg_loss(x, y, self.config.sim_coeff, self.config.std_coeff, self.config.cov_coeff, self.config.eps)
+    
+
+    def loss_R(self, enc_states, pred_states, actions):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+            actions: [B, T-1, 2]
+
+        Output:
+            loss: scalar
+        """
+        
+        # Calculate the action regularization loss
+        predicted_actions = self.regularizer(enc_states[:, :-1], pred_states[:, 1:])  # [B(T-1), 2]
+        actions = actions.view(-1, 2)
+        loss = F.mse_loss(predicted_actions, actions, reduction='mean')
+        return loss
+    
+
+    def compute_loss(self, print_loss = False):
+        """
+        Compute the loss for the model.
+        """
+        # Compute the loss
+        vicreg = self.loss_vicreg(self.enc_states, self.pred_states)
+        reg = self.loss_R(self.enc_states, self.pred_states, self.actions)
+        loss = vicreg + reg * self.config.reg_coeff
+
+        if print_loss:
+            print(f"loss: {loss.item():.4f}, vicreg: {vicreg.item():.4f}, reg: {reg.item() * self.config.reg_coeff:.4f}")
+
+        
+        return loss   
+
+
+
+
+
+
+
+# ----------------- JEPA2Dv2B -----------------
+class Encoder2Dv2B(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+        out_channel = config.out_channel   
+        self.patch_size = config.patch_size
+        self.num_patches = (65 // self.patch_size) ** 2
+
+        self.proj = nn.Conv2d(2, out_channel, kernel_size = self.patch_size, stride = self.patch_size)  
+        
+        
+    def forward(self, x, emb_pos=None):
+        """
+        Args: (B, 2, 65, 65)
+        Output: (B, 1, num_patches, emb_dim)
+        """
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        B, num_patches, emb_dim =x.shape
+        x = x.view(B, 1, num_patches, emb_dim)  # (B, 1, num_patches, emb_dim)
+
+        return x
+            
+
+class Predictor2Dv2B(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.hidden_channel = config.hidden_channel
+        self.num_patches = (65 // config.patch_size) ** 2
+        self.emb_dim = config.out_channel
+
+        self.mlp = nn.Sequential(
+            nn.Linear(self.emb_dim + 2, self.emb_dim),
+            nn.LayerNorm(self.emb_dim),
+            nn.ReLU(),
+            nn.Dropout(config.dropout),
+            nn.Linear(self.emb_dim, self.emb_dim)
+        )
+
+
+
+    def forward(self, states, actions, emb_pos=None):
+        """
+        Args:
+          actions: (B, 1, 2)
+          states: (B, 1, num_patches, emb_dim)
+
+        Output: (B, 1, num_patches, emb_dim)
+        """
+        B, _, num_patches, repr_dim = states.shape
+        assert self.num_patches == num_patches, f"num_patches {self.num_patches} is not equal to num_patches {num_patches}"
+
+        action_emb = actions.repeat(1, num_patches, 1)  # (B, num_patches, 2)
+        action_emb = action_emb.view(B, 1, num_patches, 2)  # (B, 1, num_patches, 2)
+        states = states.view(B, num_patches, repr_dim)  # (B, num_patches, repr_dim)
+        states = states + emb_pos  # (B, num_patches, repr_dim)
+        states = states.view(B, 1, num_patches, repr_dim)  # (B, 1, num_patches, repr_dim)
+        x = torch.cat((states, action_emb), dim=-1) # (B, 1, num_patches, repr_dim + 2)
+        x = x.squeeze(1)     # (B, num_patches, repr_dim + 2)
+        x = x.view(B * num_patches, -1)  # (B * num_patches, repr_dim + 2)
+        x = self.mlp(x)
+        x = x.view(B, 1,  num_patches, -1)  # (B, 1, num_patches, repr_dim)
+        
+        return x
+    
+
+class Regularizer2Dv2B(nn.Module):
+    def __init__(self, repr_dim, r = 'diff'):
+        super().__init__()
+        self.repr_dim = repr_dim
+
+        if r == 'diff':
+            self.mlp = nn.Sequential(
+                nn.Linear(repr_dim, repr_dim),
+                nn.ReLU(),
+                nn.Linear(repr_dim, 2)
+            )
+        elif r == 'mean':
+            self.mlp = nn.Sequential(
+                nn.Linear(repr_dim * 2, repr_dim),
+                nn.ReLU(),
+                nn.Linear(repr_dim, 2)
+            )
+
+
+    def forward(self, enc_states, pred_states, r = 'diff'):
+        """
+        Args:
+            enc_states: [B, T-1, 1, num_patches, repr_dim]
+            pred_states: [B, T-1, 1, num_patches, repr_dim]
+        Returns:
+            predicted_actions: [B*(T-1), 2]
+        """
+
+        if r == 'diff':
+            # Remove the singleton dim
+            enc_states = enc_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+            pred_states = pred_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+
+            # Compute token-wise difference
+            delta = pred_states - enc_states  # [B, T-1, num_patches, repr_dim]
+
+            # Mean over tokens (per frame)
+            delta_mean = delta.mean(dim=2)  # [B, T-1, repr_dim]
+
+            # Flatten over batch and time
+            B, Tm1, _ = delta_mean.shape
+            delta_flat = delta_mean.view(B * Tm1, self.repr_dim)  # [B*(T-1), repr_dim]
+
+            # Predict action
+            action_pred = self.mlp(delta_flat)  # [B*(T-1), 2]
+
+            return action_pred
+        
+        if r == 'mean':
+            enc_states = enc_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+            pred_states = pred_states.squeeze(2)  # [B, T-1, num_patches, repr_dim]
+
+            h = torch.cat((enc_states, pred_states), dim=-1) # [B, T-1, num_patches, 2*repr_dim]
+            h = h.mean(dim=2)  # [B, T-1, 2*repr_dim]
+
+            B, Tm1, D = h.shape
+            h = h.view(B * Tm1, D)  # [B*(T-1), 2 *repr_dim]
+
+            pred_action = self.mlp(h)  # [B*(T-1), 2]
+            return pred_action
+
+
+
+class JEPA2Dv2B(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.teacher_forcing = config.teacher_forcing
+        self.num_patches = (65 // config.patch_size) ** 2
+        self.emb_dim = config.out_channel
+
+        self.emb_pos = nn.Parameter(torch.randn(1, self.num_patches, self.emb_dim))  # [1, num_patches, emb_dim]
+
+        self.encoder = Encoder2Dv2B(config)
+        self.predictor = Predictor2Dv2B(config)
+        self.target_encoder = copy.deepcopy(self.encoder)
+        for param in self.target_encoder.parameters():
+            param.requires_grad = False
+
+        self.regularizer = Regularizer2Dv2B(self.emb_dim, config.r)
+
+        self.repr_dim = self.emb_dim * self.num_patches  
+        self.noise = config.noise
+
+
+    @torch.no_grad()
+    def update_target_encoder(self, momentum=0.99):
+        """
+        Update the target encoder with a moving average of the current encoder.
+        """
+        for param, target_param in zip(self.encoder.parameters(), self.target_encoder.parameters()):
+            target_param.data = momentum * target_param.data + (1 - momentum) * param.data
+
+
+    def forward(self, states, actions):
+        """
+        Args:
+            actions: [B, T-1, 2]
+            states: [B, T, 2, 65, 65]
+
+        Output:
+            enc_states: [B, T, 1, num_patches, emb_dim], T: (s_0, s'_1, ..., s'_T)
+            pred_states: [B, T, 1, num_patches, emb_dim], T: (s_0, tilde{s_1}, ..., tilde{s_T})
+        """
+
+        self.actions = actions
+        self.states = states
+        B, T, C, H, W = states.shape
+        
+        if self.teacher_forcing and T >1:
+            states = states.view(B * T, C, H, W) # (B*T, 2, 65, 65)
+            
+            enc_states = self.encoder(states, self.emb_pos)  # (B*T, 1, num_patches, emb_dim)
+            _, _, emb_h, emb_w = enc_states.shape
+
+            # Update the target encoder
+            with torch.no_grad():
+                target_enc_states = self.target_encoder(states, self.emb_pos)  # (B*T, 1, num_patches, emb_dim)
+                target_enc_states = target_enc_states.view(B, T, 1, emb_h, emb_w) # (B, T, 1, num_patches, emb_dim)
+            self.target_enc_states = target_enc_states
+
+            enc_states = enc_states.view(B, T, 1, emb_h, emb_w) # (B, T, 1, num_patches, emb_dim)
+
+            # tensor for predictions
+            pred_states = torch.zeros((B, T, 1, emb_h, emb_w), device = enc_states.device)  # (B, T, 1, num_patches, emb_dim)
+            pred_states[:, 0] = enc_states[:, 0] # set the first state to the encoded state
+
+            # inputs for predictor
+            predictor_states = enc_states[:, :-1, :, :, :].contiguous() # (B, T-1, 1, num_patches, emb_dim)
+            predictor_states = predictor_states.view(B * (T - 1), 1, emb_h, emb_w)  # (B*(T-1), 1, num_patches, emb_dim)
+            actions = actions.view(B * (T - 1), 1, 2)   # (B*(T-1), 1, 2)
+
+            next_states = self.predictor(predictor_states, actions, self.emb_pos)  # (B*(T-1), 1, num_patches, emb_dim)
+            next_states = next_states + self.noise * torch.randn_like(next_states)  # Add noise
+
+            next_states = next_states.view(B, T - 1, 1, emb_h, emb_w)
+            pred_states[:, 1:] = next_states   # (B, T-1, 1, num_patches, emb_dim)
+
+            self.enc_states = enc_states
+            self.pred_states = pred_states 
+
+
+            return enc_states, pred_states
+        
+
+        elif T == 1:    # for inference
+            T = actions.shape[1]
+
+            enc_states = self.encoder(states[:, 0], self.emb_pos)  # (B, 1, num_patches, emb_dim) s_0
+            _, _, emb_h, emb_w = enc_states.shape
+
+            h = enc_states  # [B, 1, H, W]
+            h = h.unsqueeze(1)  # [B, 1, 1, H, W]
+            pred_states = [h]
+
+            for t in range(T):
+                action = actions[:, t].unsqueeze(1)  # [B, 1, 2]
+                h = self.predictor(h.squeeze(1), action, self.emb_pos)  # -> [B, 1, H, W]
+                h = h.unsqueeze(1)  # [B, 1, 1, H, W]
+                pred_states.append(h)
+
+            T = T + 1
+            pred_states = torch.cat(pred_states, dim=1)  # [B, T, 1, H, W]
+            pred_states = pred_states.view(B, T, emb_h * emb_w)  
+            return pred_states
+        
+        else:
+            # TODO
+            raise NotImplementedError("None Teacher Forcing is not implemented yet.")
+
+
+
+            
+
+        
+    def loss_mse(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+
+        Output:
+            loss: scalar
+        """
+
+        loss = F.mse_loss(enc_states[:, 1:], pred_states[:, :-1], reduction='mean')
+        return loss
+
+
+    def loss_vicreg(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+
+        Output:
+            loss: scalar
+        """
+        B, T, _, H, W = enc_states.shape
+        x = enc_states[:, 1:].reshape(B * (T - 1), -1)
+        y = pred_states[:, :-1].reshape(B * (T - 1), -1)
+
+        return vicreg_loss(x, y, self.config.sim_coeff, self.config.std_coeff, self.config.cov_coeff, self.config.eps)
+    
+
+    def loss_R(self, enc_states, pred_states, actions):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+            actions: [B, T-1, 2]
+
+        Output:
+            loss: scalar
+        """
+        
+        # Calculate the action regularization loss
+        predicted_actions = self.regularizer(enc_states[:, :-1], pred_states[:, 1:], self.config.r)  # [B(T-1), 2]
+        actions = actions.view(-1, 2)
+        loss = F.mse_loss(predicted_actions, actions, reduction='mean')
+        return loss
+    
+
+    def loss_byol(self, enc_states, pred_states):
+        """
+        Args:
+            enc_states: [B, T, 1, emb_h, emb_w]
+            pred_states: [B, T, 1, emb_h, emb_w]
+
+        Output:
+            loss: scalar
+        """
+        B, T, _, H, W = enc_states.shape
+        x = enc_states[:, :-1].reshape(B * (T - 1), -1)
+        y = pred_states[:, 1:].reshape(B * (T - 1), -1)
+
+        x = F.normalize(x, dim=-1)
+        y = F.normalize(y, dim=-1)
+
+        # Compute the BYOL loss
+        loss = 2 - 2 * (x * y).sum(dim=-1)  # [B*(T-1), 1]
+        loss = loss.mean()
+
+        return loss
+
+
+    def compute_loss(self, print_loss = False):
+        """
+        Compute the loss for the model.
+        """
+        # Compute the loss
+        vicreg = self.loss_vicreg(self.enc_states, self.pred_states)
+        reg = self.loss_R(self.enc_states, self.pred_states, self.actions)
+        byol = self.loss_byol(self.target_enc_states, self.pred_states)
+        loss = vicreg + reg * self.config.reg_coeff + byol * self.config.byol_coeff
+
+        if print_loss:
+            print(f"loss: {loss.item()}, vicreg: {vicreg.item()}, reg: {reg.item() * self.config.reg_coeff}, byol: {byol.item() * self.config.byol_coeff}")
+
+        return loss
+
+
+
 
 
 
@@ -1238,9 +1941,12 @@ class JEPA2Dv2(nn.Module):
 # ---------------- Models -------------------
 MODELS: dict = {
     # "Model_Name": Model_Class
-    "JEPA2D": JEPA2D,
-    "JEPA": JEPA,
-    "JEPA2Dv1": JEPA2Dv1,
-    "JEPA2Dv2": JEPA2Dv2
+    "JEPA2D": JEPA2D,       # CNN 2D embedding
+    "JEPA": JEPA,           # CNN 1D embedding
+    "JEPA2Dv1": JEPA2Dv1,   # CNN patch embedding 
+    "JEPA2Dv2": JEPA2Dv2,   # Simple patch embedding (ViT-like) + new regularizations
+    "JEPA2Dv2B": JEPA2Dv2B, # JEPA2Dv2 + BYOL
+    "JEPA2Da1": JEPA2Da1    # JEPA2Dv2 + self attention  
     # add models here
 }
+
