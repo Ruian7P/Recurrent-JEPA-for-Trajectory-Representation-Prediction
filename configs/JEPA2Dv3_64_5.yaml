@@ -1,4 +1,4 @@
-Model: "JEPA2Dv2"
+Model: "JEPA2Dv3"
 teacher_forcing: true
 
 out_channel: 64
@@ -8,10 +8,11 @@ r: 'diff'
 sim_coeff: 25
 std_coeff: 25
 cov_coeff: 1
-reg_coeff: 10
+reg_coeff: 25
+byol_coeff: 0
 eps: 1e-4
 
-batch_size: 1024
+batch_size: 512
 epochs: 15
 lr: 1e-3
 weight_decay: 5e-4

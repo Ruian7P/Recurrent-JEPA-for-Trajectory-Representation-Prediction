@@ -4,15 +4,15 @@ teacher_forcing: true
 out_channel: 64
 patch_size: 5
 
-r: 'diff'
+r: 'mean'
 sim_coeff: 25
 std_coeff: 25
 cov_coeff: 1
-reg_coeff: 10
+reg_coeff: 25
 eps: 1e-4
 
 batch_size: 1024
-epochs: 15
+epochs: 30
 lr: 1e-3
 weight_decay: 5e-4
 dropout: 0.1
