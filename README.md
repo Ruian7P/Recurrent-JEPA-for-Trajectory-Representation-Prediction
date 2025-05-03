@@ -1,4 +1,4 @@
-# Recurrent JEPA on Trajectory Representation Prediction
+# Recurrent JEPA for Trajectory Representation Prediction
 
 
 
