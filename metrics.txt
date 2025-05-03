@@ -1,9 +1,11 @@
-probe_normal val loss: 
-probe wall val loss: 
-probe_wall_other loss:
-expert loss:
-# of trainable parameters: 
+probe_normal val loss: 3.42
+probe wall val loss: 7
+probe_wall_other loss: 6.89
+expert loss: 18.94
+# of trainable parameters: 26946
 
-training command:
+Evaluation command:
 1. replace dataset path `PATH` in configs.py (default: /scratch/DL25SP)
-2. run python main.py 
+2. run python main.py
+
+Training command: run python train.py (the model will be saved to MODEL_PATH in config)
