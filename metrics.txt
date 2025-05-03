@@ -1,0 +1,9 @@
+probe_normal val loss: 
+probe wall val loss: 
+probe_wall_other loss:
+expert loss:
+# of trainable parameters: 
+
+training command:
+1. replace dataset path `PATH` in configs.py (default: /scratch/DL25SP)
+2. run python main.py 

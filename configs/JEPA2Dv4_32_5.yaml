@@ -1,11 +1,8 @@
-Model: "JEPA2Da2"
-teacher_forcing: false
+Model: "JEPA2Dv4"
+teacher_forcing: true
 
-out_channel: 64
+out_channel: 32
 patch_size: 5
-num_block: 4
-
-num_heads: 2
 
 r: 'diff'
 sim_coeff: 25
@@ -16,7 +13,7 @@ byol_coeff: 0
 eps: 1e-4
 
 batch_size: 256
-epochs: 50
+epochs: 20
 lr: 1e-3
 weight_decay: 5e-4
 dropout: 0.1

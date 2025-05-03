@@ -6,9 +6,9 @@ patch_size: 5
 
 r: 'diff'
 sim_coeff: 25
-std_coeff: 25
-cov_coeff: 1
-reg_coeff: 25
+std_coeff: 40
+cov_coeff: 3
+reg_coeff: 20
 eps: 1e-4
 
 batch_size: 512

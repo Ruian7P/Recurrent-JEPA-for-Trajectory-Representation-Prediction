@@ -1,3 +1,7 @@
 DL25SP/
 checkpoints/
-
+data.py
+train_b.py
+logs/
+__pycache__/
+checks/

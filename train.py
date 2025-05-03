@@ -13,11 +13,11 @@ from emb_visual import log_embedding_statistics
 
 
 
-def warmup_cosine_lr(epoch, total_epochs, warmup_epochs=10):
+def warmup_cosine_lr(epoch, total_epochs, warmup_epochs=10, eta_min = 0):
     if epoch < warmup_epochs:
         return epoch / warmup_epochs # Linear warmup
     else:
-        return 0.5 * (math.cos((epoch - warmup_epochs) / (total_epochs - warmup_epochs) * math.pi) + 1)
+        return eta_min + 0.5 * (math.cos((epoch - warmup_epochs) / (total_epochs - warmup_epochs) * math.pi) + 1)
     
 def get_momentum(epoch, max_epoch):
     base_m = 0.99
@@ -42,8 +42,10 @@ def train(config_path: str, model_path: str, resume: bool = False, log: bool = F
         warmup_epochs = 5
     elif epochs == 40:
         warmup_epochs = 7
-    else:
+    elif epochs >= 50:
         warmup_epochs = 10
+    else:
+        warmup_epochs = 0
 
     # print config
     print("Config:")
@@ -92,7 +94,7 @@ def train(config_path: str, model_path: str, resume: bool = False, log: bool = F
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
-        lr_lambda=lambda epoch: warmup_cosine_lr(epoch, total_epochs=epochs, warmup_epochs=warmup_epochs)
+        lr_lambda=lambda epoch: warmup_cosine_lr(epoch, total_epochs=epochs, warmup_epochs=warmup_epochs, eta_min = 0),
     )
 
     model, optimizer, train_loader, scheduler = accelerator.prepare(
@@ -141,6 +143,7 @@ def train(config_path: str, model_path: str, resume: bool = False, log: bool = F
         # Log embedding statistics
         if log and accelerator.is_main_process:
             log_embedding_statistics(model, epoch, logdir=logdir)
+
 
 
     # save final model
