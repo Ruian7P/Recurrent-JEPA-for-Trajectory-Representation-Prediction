@@ -5,3 +5,6 @@ train_b.py
 logs/
 __pycache__/
 checks/
+metrics.txt
+
+

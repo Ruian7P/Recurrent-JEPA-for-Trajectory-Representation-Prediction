@@ -91,11 +91,17 @@ There are two other validation sets that are not released but will be used to te
 
 3. `pip install -r requirements.txt`
 
-4. To run the evaluation: `python main.py`
+4. Edit `PATH`, `CONFIG_PATH`, `MODEL_PATH` in configs.py
 
-   see detailed arguments in `main.py`
+5. **To run the evaluation**: `python main.py`
 
-5. To train the model: `python train.py`
+   or `python main.py --model {MODEL_PATH} --config {CONFIG_PATH}`
+
+   see detailed info in `main.py`
+
+6. **To train the model**: `python train.py`
+
+   or `python train.py --model {MODEL_PATH} --config {CONFIG_PATH}`. To fine tune some models, add `--resume`
 
    see detailed arguments in `train.py`
 
@@ -112,4 +118,14 @@ There are two other validation sets that are not released but will be used to te
 ├── models/ # this folder contains trained models     
 └── ...
 ```
+
+
+
+
+
+## Results
+
+| **Model** |        **Training Hyper-parameters**        |              Model Path               | Model Parameters | normal loss | wall loss | wall other loss | expert loss |
+| :-------: | :-----------------------------------------: | :-----------------------------------: | :--------------: | :---------: | --------- | --------------- | ----------- |
+| JEPA2Dv2r | ./models/best/JEPA2Dv2r/JEPA2Dv2r_64_5.yaml | ./models/best/JEPA2Dv2r/JEPA2Dv2r.pth |      26946       |    3.42     | 7         | 6.89            | 18.94       |
 
