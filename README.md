@@ -125,7 +125,7 @@ There are two other validation sets that are not released but will be used to te
 
 ## Results
 
-| **Model** |        **Training Hyper-parameters**        |              Model Path               | Model Parameters | normal loss | wall loss | wall other loss | expert loss |
-| :-------: | :-----------------------------------------: | :-----------------------------------: | :--------------: | :---------: | --------- | --------------- | ----------- |
-| JEPA2Dv2r | ./models/best/JEPA2Dv2r/JEPA2Dv2r_64_5.yaml | ./models/best/JEPA2Dv2r/JEPA2Dv2r.pth |      26946       |    3.42     | 7         | 6.89            | 18.94       |
+|   **Model**   | Model Parameters | normal loss | wall loss | wall other loss | expert loss |        **Training Hyper-parameters**        |              Model Path               |
+| :-----------: | :--------------: | :---------: | :-------: | :-------------: | :---------: | :-----------------------------------------: | :-----------------------------------: |
+| **JEPA2Dv2r** |      26946       |    3.42     |     7     |      6.89       |    18.94    | ./models/best/JEPA2Dv2r/JEPA2Dv2r_64_5.yaml | ./models/best/JEPA2Dv2r/JEPA2Dv2r.pth |
 
